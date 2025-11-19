@@ -1,0 +1,155 @@
+{
+  "commands": [
+    {
+      "name": "scode",
+      "aliases": ["sauthcode", "sauth"],
+      "help": "Get your unique authentication code for web login",
+      "syntax": "/scode",
+      "category": "Player",
+      "permissions": ["kaweplugins.sa.code"],
+      "isAdmin": false,
+      "isDebug": false
+    },
+    {
+      "name": "sfmy",
+      "aliases": ["sfme", "sfinfo", "sfmyfaction"],
+      "help": "Check your current faction information",
+      "syntax": "/sfmy",
+      "category": "Faction",
+      "permissions": ["kaweplugins.sa.faction.my"],
+      "isAdmin": false,
+      "isDebug": false
+    },
+    {
+      "name": "screate",
+      "aliases": ["sfcreate", "sfnew"],
+      "help": "Create a new faction",
+      "syntax": "/screate <factionId> <name> <color> <secondMemberName> [tag] [iconUrl]",
+      "category": "Faction",
+      "permissions": ["kaweplugins.sa.faction.create"],
+      "isAdmin": false,
+      "isDebug": false
+    },
+    {
+      "name": "sinvite",
+      "aliases": ["sfinvite", "sfinv"],
+      "help": "Invite a player to your faction",
+      "syntax": "/sinvite <playerName>",
+      "category": "Faction",
+      "permissions": ["kaweplugins.sa.faction.invite"],
+      "isAdmin": false,
+      "isDebug": false
+    },
+    {
+      "name": "saccept",
+      "aliases": ["sfaccept", "sfacc"],
+      "help": "Accept a faction invitation",
+      "syntax": "/saccept <factionId>",
+      "category": "Faction",
+      "permissions": ["kaweplugins.sa.faction.accept"],
+      "isAdmin": false,
+      "isDebug": false
+    },
+    {
+      "name": "sleave",
+      "aliases": ["sfleave", "sfquit"],
+      "help": "Leave your current faction",
+      "syntax": "/sleave",
+      "category": "Faction",
+      "permissions": ["kaweplugins.sa.faction.leave"],
+      "isAdmin": false,
+      "isDebug": false
+    },
+    {
+      "name": "sfchat",
+      "aliases": ["sfc", "sfmsg"],
+      "help": "Send a message to your faction",
+      "syntax": "/sfchat <message>",
+      "category": "Faction",
+      "permissions": ["kaweplugins.sa.faction.chat"],
+      "isAdmin": false,
+      "isDebug": false
+    },
+    {
+      "name": "sfdonate",
+      "aliases": ["sfd"],
+      "help": "Donate player XP to get Faction Points",
+      "syntax": "/sfdonate xp <amount>",
+      "category": "Faction",
+      "permissions": ["kaweplugins.sa.faction.donate"],
+      "isAdmin": false,
+      "isDebug": false
+    },
+    {
+      "name": "sseticon",
+      "aliases": ["sfactionicon", "sficon"],
+      "help": "Set faction icon URL for chat",
+      "syntax": "/sseticon <iconUrl>",
+      "category": "Faction",
+      "permissions": ["kaweplugins.sa.faction.seticon"],
+      "isAdmin": false,
+      "isDebug": false
+    },
+    {
+      "name": "sq",
+      "aliases": ["squest", "squests"],
+      "help": "Quest management commands",
+      "syntax": "/sq <take|list|info|abandon|turnin> [questId]",
+      "category": "Quest",
+      "permissions": ["kaweplugins.sa.quest"],
+      "isAdmin": false,
+      "isDebug": false
+    },
+    {
+      "name": "sfqs",
+      "aliases": ["sfactionquest", "sfquest"],
+      "help": "Faction quest management",
+      "syntax": "/sfqs <list|start|abandon|complete> [questId]",
+      "category": "Quest",
+      "permissions": ["kaweplugins.sa.faction.quest"],
+      "isAdmin": false,
+      "isDebug": false
+    },
+    {
+      "name": "sshop",
+      "aliases": ["shop"],
+      "help": "Shop commands",
+      "syntax": "/sshop <list|buy> [itemId] [xp|factionxp] [qty]",
+      "category": "Shop",
+      "permissions": ["kaweplugins.sa.shop"],
+      "isAdmin": false,
+      "isDebug": false
+    },
+    {
+      "name": "sbuy",
+      "aliases": ["buy"],
+      "help": "Buy item from shop (shorthand)",
+      "syntax": "/sbuy [fxp] <itemId|v.itemId> [qty]",
+      "category": "Shop",
+      "permissions": ["kaweplugins.sa.shop"],
+      "isAdmin": false,
+      "isDebug": false
+    },
+    {
+      "name": "sfinvitations",
+      "aliases": ["sfinvites", "sfinv"],
+      "help": "List all faction invitations",
+      "syntax": "/sfinvitations",
+      "category": "Faction",
+      "permissions": ["kaweplugins.sa.faction.invitations"],
+      "isAdmin": false,
+      "isDebug": false
+    },
+    {
+      "name": "sfjoinrequests",
+      "aliases": ["sfrequests", "sfreqs"],
+      "help": "List join requests for your faction (leader only)",
+      "syntax": "/sfjoinrequests",
+      "category": "Faction",
+      "permissions": ["kaweplugins.sa.faction.joinrequests"],
+      "isAdmin": false,
+      "isDebug": false
+    }
+  ]
+}
+
