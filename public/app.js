@@ -457,7 +457,7 @@ async function viewFaction(id) {
 		const faction = await res.json();
 		
 		if (!faction) {
-			alert('Faction not found');
+			showToast('Faction not found', 'error');
 			return;
 		}
 		
@@ -631,7 +631,7 @@ async function viewFaction(id) {
 		document.body.insertAdjacentHTML('beforeend', modalHTML);
 	} catch (error) {
 		console.error('Failed to load faction:', error);
-		alert(`Failed to load faction: ${error.message}`);
+		showToast(`Failed to load faction: ${error.message}`, 'error');
 	}
 }
 
@@ -1425,15 +1425,15 @@ async function saveQuest(event) {
 		
 		const result = await res.json();
 		if (result.success) {
-			alert('Quest saved successfully!');
+			showToast('Quest saved successfully!', 'success');
 			closeQuestEditor();
 			loadQuests();
 		} else {
-			alert('Failed to save quest: ' + (result.error || 'Unknown error'));
+			showToast('Failed to save quest: ' + (result.error || 'Unknown error'), 'error');
 		}
 	} catch (error) {
 		console.error('Failed to save quest:', error);
-		alert('Failed to save quest: ' + error.message);
+		showToast('Failed to save quest: ' + error.message, 'error');
 	}
 }
 
@@ -1531,7 +1531,7 @@ async function viewPlayerStats(playerId) {
 		const stats = await res.json();
 		
 		if (stats.error) {
-			alert(`Error: ${stats.error}`);
+			showToast(`Error: ${stats.error}`, 'error');
 			return;
 		}
 		
@@ -1643,7 +1643,7 @@ async function viewPlayerStats(playerId) {
 		document.body.appendChild(modal);
 	} catch (error) {
 		console.error('Failed to load player stats:', error);
-		alert('Failed to load player stats: ' + error.message);
+		showToast('Failed to load player stats: ' + error.message, 'error');
 	}
 }
 
@@ -1705,7 +1705,7 @@ async function viewPlayer(id) {
 		document.body.appendChild(modal);
 	} catch (error) {
 		console.error('Failed to load player:', error);
-		alert('Failed to load player details');
+		showToast('Failed to load player details', 'error');
 	}
 }
 
@@ -2032,7 +2032,7 @@ async function loadMyQuests() {
 // Assign quest to player
 async function assignQuest(questId) {
 	if (!isPlayerLoggedIn()) {
-		alert('Please login first');
+		showToast('Please login first', 'error');
 		return;
 	}
 	
@@ -2048,14 +2048,14 @@ async function assignQuest(questId) {
 		
 		const data = await res.json();
 		if (data.success) {
-			alert('Quest assigned successfully!');
+			showToast('Quest assigned successfully!', 'success');
 			loadMyQuests(); // Reload quests
 		} else {
-			alert('Failed to assign quest: ' + (data.error || 'Unknown error'));
+			showToast('Failed to assign quest: ' + (data.error || 'Unknown error'), 'error');
 		}
 	} catch (error) {
 		console.error('Failed to assign quest:', error);
-		alert('Failed to assign quest: ' + error.message);
+		showToast('Failed to assign quest: ' + error.message, 'error');
 	}
 }
 
@@ -2509,7 +2509,7 @@ async function handleFactionInvite(event) {
 
 	const targetSteamId = input.value.trim();
 	if (!targetSteamId) {
-		alert('Masukkan SteamID target.');
+		showToast('Masukkan SteamID target.', 'error');
 		return false;
 	}
 
@@ -2738,7 +2738,12 @@ async function submitQuestAssignment(event) {
 			closeAssignQuestModal();
 			loadMyFaction(true);
 		} else {
-			showToast('Failed to assign quest: ' + (response.error || response.message || 'Unknown error'), 'error');
+			// Show more detailed error message
+			let errorMsg = response.message || response.error || 'Unknown error';
+			if (response.error === 'plugin_api_unavailable' || response.code === 'ECONNREFUSED') {
+				errorMsg = 'Cannot connect to plugin. Please ensure the plugin HTTP listener is running on port 8080.';
+			}
+			showToast('Failed to assign quest: ' + errorMsg, 'error');
 		}
 	} catch (error) {
 		showToast('Failed to assign quest: ' + error.message, 'error');
@@ -2885,7 +2890,7 @@ async function showShopItemEditor(itemId) {
 			}
 		} catch (error) {
 			console.error('Failed to load shop item:', error);
-			alert('Failed to load shop item: ' + error.message);
+			showToast('Failed to load shop item: ' + error.message, 'error');
 		}
 	} else {
 		// New item mode
@@ -2935,15 +2940,15 @@ async function saveShopItem(event) {
 		
 		const result = await res.json();
 		if (result.success) {
-			alert('Shop item saved successfully!');
+			showToast('Shop item saved successfully!', 'success');
 			closeShopItemEditor();
 			loadShopItems();
 		} else {
-			alert('Failed to save shop item: ' + (result.error || 'Unknown error'));
+			showToast('Failed to save shop item: ' + (result.error || 'Unknown error'), 'error');
 		}
 	} catch (error) {
 		console.error('Failed to save shop item:', error);
-		alert('Failed to save shop item: ' + error.message);
+		showToast('Failed to save shop item: ' + error.message, 'error');
 	}
 }
 
@@ -2964,14 +2969,14 @@ async function deleteShopItem(itemId) {
 		
 		const result = await res.json();
 		if (result.success) {
-			alert('Shop item deleted successfully!');
+			showToast('Shop item deleted successfully!', 'success');
 			loadShopItems();
 		} else {
-			alert('Failed to delete shop item: ' + (result.error || 'Unknown error'));
+			showToast('Failed to delete shop item: ' + (result.error || 'Unknown error'), 'error');
 		}
 	} catch (error) {
 		console.error('Failed to delete shop item:', error);
-		alert('Failed to delete shop item: ' + error.message);
+		showToast('Failed to delete shop item: ' + error.message, 'error');
 	}
 }
 

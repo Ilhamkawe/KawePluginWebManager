@@ -1992,19 +1992,91 @@ app.post('/api/player/faction/assign-quest', async (req, res) => {
 			return res.status(400).json({ success: false, error: 'invalid_members', message: 'Some members are not in your faction' });
 		}
 
-		// Call plugin API to assign quest
-		const pluginRes = await callPluginApi('/api/faction/assign-quest', {
-			code,
-			questId,
-			assignedMembers
-		});
+		// Get quest details for objectives
+		const [questDetails] = await pool.query(`
+			SELECT objectives
+			FROM ${prefix}quest_definitions
+			WHERE id = ?
+		`, [questId]);
 
-		if (pluginRes.statusCode === 200 && pluginRes.data && pluginRes.data.success) {
-			return res.status(200).json(pluginRes.data);
+		if (questDetails.length === 0) {
+			return res.status(404).json({ success: false, error: 'quest_not_found' });
 		}
 
-		// If plugin API fails, return error
-		return res.status(pluginRes.statusCode || 500).json(pluginRes.data || { success: false, error: 'plugin_api_error' });
+		const quest = questDetails[0];
+		const objectives = quest.objectives ? JSON.parse(quest.objectives) : [];
+		const objectiveProgress = objectives.map(obj => ({
+			ObjectiveId: obj.Id,
+			CurrentValue: 0,
+			Completed: false,
+			LastUpdatedUtc: new Date().toISOString()
+		}));
+		const objectiveProgressJson = JSON.stringify(objectiveProgress);
+
+		// Assign quest to each member directly in database
+		const assignedCount = [];
+		const failedMembers = [];
+
+		for (const memberSteamId of assignedMembers) {
+			try {
+				// Check if quest already active for this member
+				const [existing] = await pool.query(`
+					SELECT id
+					FROM ${prefix}quest_progress
+					WHERE player_id = ? AND quest_id = ? AND is_active = 1
+				`, [memberSteamId, questId]);
+
+				if (existing.length > 0) {
+					failedMembers.push({ steamId: memberSteamId, reason: 'Quest already active' });
+					continue;
+				}
+
+				// Insert quest progress
+				await pool.query(`
+					INSERT INTO ${prefix}quest_progress 
+					(player_id, quest_id, is_active, is_ready_to_complete, objective_progress, started_at)
+					VALUES (?, ?, 1, 0, ?, NOW())
+					ON DUPLICATE KEY UPDATE
+						is_active = 1,
+						is_ready_to_complete = 0,
+						objective_progress = VALUES(objective_progress),
+						started_at = NOW(),
+						updated_at = NOW()
+				`, [memberSteamId, questId, objectiveProgressJson]);
+
+				// Insert/update faction_quests tracking
+				await pool.query(`
+					INSERT INTO ${prefix}faction_quests 
+					(faction_id, quest_id, is_completed, assigned_at)
+					VALUES (?, ?, 0, NOW())
+					ON DUPLICATE KEY UPDATE
+						is_completed = 0,
+						assigned_at = NOW()
+				`, [factionData.faction_id, questId]);
+
+				assignedCount.push(memberSteamId);
+			} catch (memberError) {
+				console.error(`[API] Failed to assign quest to member ${memberSteamId}:`, memberError);
+				failedMembers.push({ steamId: memberSteamId, reason: memberError.message });
+			}
+		}
+
+		if (assignedCount.length === 0) {
+			return res.status(400).json({ 
+				success: false, 
+				error: 'assignment_failed', 
+				message: 'Failed to assign quest to any members',
+				failedMembers 
+			});
+		}
+
+		return res.status(200).json({ 
+			success: true, 
+			message: `Quest assigned to ${assignedCount.length} member(s) successfully`,
+			assignedCount: assignedCount.length,
+			failedCount: failedMembers.length,
+			failedMembers: failedMembers.length > 0 ? failedMembers : undefined
+		});
 	} catch (error) {
 		console.error('[Faction] /api/player/faction/assign-quest error:', error);
 		return res.status(500).json({ success: false, error: 'internal_error', message: error.message });
