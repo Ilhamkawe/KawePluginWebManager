@@ -1966,7 +1966,7 @@ app.post('/api/player/faction/assign-quest', async (req, res) => {
 
 		// Check if quest exists and is valid
 		const [quests] = await pool.query(`
-			SELECT id, display_name, tier, is_faction_quest, enabled
+			SELECT id, display_name, tier, is_faction_quest, enabled, objectives
 			FROM ${prefix}quest_definitions
 			WHERE id = ? AND is_faction_quest = 1 AND enabled = 1
 		`, [questId]);
@@ -1992,21 +1992,23 @@ app.post('/api/player/faction/assign-quest', async (req, res) => {
 			return res.status(400).json({ success: false, error: 'invalid_members', message: 'Some members are not in your faction' });
 		}
 
-		// Get quest details for objectives
-		const [questDetails] = await pool.query(`
-			SELECT objectives
-			FROM ${prefix}quest_definitions
-			WHERE id = ?
-		`, [questId]);
-
-		if (questDetails.length === 0) {
-			return res.status(404).json({ success: false, error: 'quest_not_found' });
+		// Parse objectives from quest data
+		let objectives = [];
+		try {
+			if (quest.objectives) {
+				if (typeof quest.objectives === 'string') {
+					objectives = JSON.parse(quest.objectives);
+				} else if (Array.isArray(quest.objectives)) {
+					objectives = quest.objectives;
+				}
+			}
+		} catch (parseError) {
+			console.error(`[API] Failed to parse objectives for quest ${questId}:`, parseError);
+			objectives = [];
 		}
-
-		const quest = questDetails[0];
-		const objectives = quest.objectives ? JSON.parse(quest.objectives) : [];
+		
 		const objectiveProgress = objectives.map(obj => ({
-			ObjectiveId: obj.Id,
+			ObjectiveId: obj.Id || obj.ObjectiveId || obj.id || 'unknown',
 			CurrentValue: 0,
 			Completed: false,
 			LastUpdatedUtc: new Date().toISOString()
@@ -2044,20 +2046,56 @@ app.post('/api/player/faction/assign-quest', async (req, res) => {
 						updated_at = NOW()
 				`, [memberSteamId, questId, objectiveProgressJson]);
 
-				// Insert/update faction_quests tracking
-				await pool.query(`
-					INSERT INTO ${prefix}faction_quests 
-					(faction_id, quest_id, is_completed, assigned_at)
-					VALUES (?, ?, 0, NOW())
-					ON DUPLICATE KEY UPDATE
-						is_completed = 0,
-						assigned_at = NOW()
-				`, [factionData.faction_id, questId]);
+				// Insert/update faction_quests tracking (only once per quest, not per member)
+				// This is done outside the member loop to avoid duplicate queries
+				// We'll handle this after the member loop
 
 				assignedCount.push(memberSteamId);
 			} catch (memberError) {
 				console.error(`[API] Failed to assign quest to member ${memberSteamId}:`, memberError);
 				failedMembers.push({ steamId: memberSteamId, reason: memberError.message });
+			}
+		}
+
+		// Insert/update faction_quests tracking (only once per quest, not per member)
+		if (assignedCount.length > 0) {
+			try {
+				// Check if faction quest already exists
+				const [existingFactionQuest] = await pool.query(`
+					SELECT id FROM ${prefix}faction_quests
+					WHERE faction_id = ? AND quest_id = ?
+				`, [factionData.faction_id, questId]);
+
+				// Get quest timer for expires_at
+				const [questTimer] = await pool.query(`
+					SELECT timer_seconds FROM ${prefix}quest_definitions WHERE id = ?
+				`, [questId]);
+				
+				const timerSeconds = questTimer.length > 0 ? (questTimer[0].timer_seconds || 3600) : 3600;
+				const expiresAt = new Date(Date.now() + timerSeconds * 1000).toISOString().slice(0, 19).replace('T', ' ');
+
+				if (existingFactionQuest.length === 0) {
+					// Insert new faction quest
+					await pool.query(`
+						INSERT INTO ${prefix}faction_quests 
+						(faction_id, quest_id, started_at, expires_at, is_active, is_completed)
+						VALUES (?, ?, NOW(), ?, 1, 0)
+					`, [factionData.faction_id, questId, expiresAt]);
+				} else {
+					// Update existing faction quest to reactivate it
+					await pool.query(`
+						UPDATE ${prefix}faction_quests
+						SET started_at = NOW(),
+							expires_at = ?,
+							is_active = 1,
+							is_completed = 0,
+							is_failed = 0
+						WHERE faction_id = ? AND quest_id = ?
+					`, [expiresAt, factionData.faction_id, questId]);
+				}
+			} catch (factionQuestError) {
+				console.error(`[API] Failed to update faction_quests for quest ${questId}:`, factionQuestError);
+				// Don't fail the whole request if faction_quests update fails
 			}
 		}
 
@@ -2079,7 +2117,13 @@ app.post('/api/player/faction/assign-quest', async (req, res) => {
 		});
 	} catch (error) {
 		console.error('[Faction] /api/player/faction/assign-quest error:', error);
-		return res.status(500).json({ success: false, error: 'internal_error', message: error.message });
+		console.error('[Faction] Error stack:', error.stack);
+		return res.status(500).json({ 
+			success: false, 
+			error: 'internal_error', 
+			message: error.message || 'Internal server error',
+			stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+		});
 	}
 });
 
