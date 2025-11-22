@@ -4,10 +4,14 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const PLUGIN_HTTP_HOST = process.env.PLUGIN_HTTP_HOST || '127.0.0.1';
+const PLUGIN_HTTP_PORT = parseInt(process.env.PLUGIN_HTTP_PORT || '8080', 10);
+const PLUGIN_HTTP_AUTH_TOKEN = process.env.PLUGIN_HTTP_AUTH_TOKEN || ''; // Optional: Set if RequireAuthToken is enabled in plugin config
 
 // Middleware
 app.use(cors());
@@ -39,6 +43,238 @@ function getDbPool() {
 }
 
 const tablePrefix = process.env.TABLE_PREFIX || 'kawe_';
+
+async function callPluginApi(path, payload = {}) {
+	return new Promise((resolve, reject) => {
+		try {
+			const postData = JSON.stringify(payload ?? {});
+			const headers = {
+				'Content-Type': 'application/json',
+				'Content-Length': Buffer.byteLength(postData)
+			};
+			
+			// Add authentication token if configured
+			if (PLUGIN_HTTP_AUTH_TOKEN) {
+				headers['X-Auth-Token'] = PLUGIN_HTTP_AUTH_TOKEN;
+			}
+			
+			const options = {
+				hostname: PLUGIN_HTTP_HOST,
+				port: PLUGIN_HTTP_PORT,
+				path,
+				method: 'POST',
+				headers: headers,
+				timeout: 10000
+			};
+
+			const req = http.request(options, (res) => {
+				let data = '';
+				res.on('data', (chunk) => { data += chunk; });
+				res.on('end', () => {
+					let parsed = null;
+					if (data) {
+						try {
+							parsed = JSON.parse(data);
+						} catch (err) {
+							console.warn('[PluginAPI] Failed to parse JSON response:', err.message);
+						}
+					}
+					resolve({ statusCode: res.statusCode, data: parsed });
+				});
+			});
+
+			req.on('error', (err) => {
+				// Instead of rejecting, resolve with error info so caller can handle fallback
+				console.error(`[PluginAPI] Request error for ${path}:`, err.message);
+				console.error(`[PluginAPI] Connection details: http://${PLUGIN_HTTP_HOST}:${PLUGIN_HTTP_PORT}${path}`);
+				console.error(`[PluginAPI] Error code: ${err.code}, syscall: ${err.syscall}`);
+				resolve({ 
+					statusCode: 500, 
+					data: { 
+						success: false, 
+						error: 'plugin_api_unavailable', 
+						message: err.message,
+						code: err.code,
+						syscall: err.syscall
+					} 
+				});
+			});
+			
+			req.on('timeout', () => {
+				req.destroy();
+				// Instead of rejecting, resolve with timeout info
+				console.warn(`[PluginAPI] Request timeout for ${path}`);
+				resolve({ 
+					statusCode: 504, 
+					data: { 
+						success: false, 
+						error: 'plugin_api_timeout', 
+						message: 'Plugin API request timed out' 
+					} 
+				});
+			});
+
+			req.write(postData);
+			req.end();
+		} catch (error) {
+			// Instead of rejecting, resolve with error info
+			console.warn(`[PluginAPI] Exception for ${path}:`, error.message);
+			resolve({ 
+				statusCode: 500, 
+				data: { 
+					success: false, 
+					error: 'plugin_api_error', 
+					message: error.message 
+				} 
+			});
+		}
+	});
+}
+
+function extractAuthCode(req) {
+	return (req.body && req.body.code) ||
+		(req.query && req.query.code) ||
+		req.headers['x-auth-code'] ||
+		null;
+}
+
+async function fetchPlayerNamesMap(steamIds = []) {
+	const uniqueIds = Array.from(new Set((steamIds || []).filter(id => id && id !== '0')));
+	const map = {};
+	if (uniqueIds.length === 0) return map;
+
+	try {
+		const pool = getDbPool();
+		const placeholders = uniqueIds.map(() => '?').join(',');
+		const [rows] = await pool.query(`
+			SELECT CAST(SteamId AS CHAR) as SteamId, Name 
+			FROM PlayerStatsNew 
+			WHERE SteamId IN (${placeholders})
+		`, uniqueIds);
+
+		rows.forEach(row => {
+			map[row.SteamId] = row.Name || row.SteamId;
+		});
+	} catch (error) {
+		console.warn('[Players] Failed to load names for faction data:', error.message);
+	}
+
+	return map;
+}
+
+async function attachNamesToFactionData(payload) {
+	if (!payload) return payload;
+
+	const ids = new Set();
+	(payload.members || []).forEach(member => {
+		if (member?.steamId) ids.add(member.steamId);
+	});
+	(payload.invitations || []).forEach(inv => {
+		if (inv?.steamId) ids.add(inv.steamId);
+		if (inv?.inviterId) ids.add(inv.inviterId);
+	});
+	(payload.join_requests || []).forEach(req => {
+		if (req?.steamId) ids.add(req.steamId);
+	});
+
+	const nameMap = await fetchPlayerNamesMap(Array.from(ids));
+
+	(payload.members || []).forEach(member => {
+		if (member?.steamId && nameMap[member.steamId]) {
+			member.playerName = nameMap[member.steamId];
+		}
+	});
+
+	(payload.invitations || []).forEach(inv => {
+		if (inv?.steamId && nameMap[inv.steamId]) {
+			inv.playerName = nameMap[inv.steamId];
+		}
+		if (inv?.inviterId && nameMap[inv.inviterId]) {
+			inv.inviterName = nameMap[inv.inviterId];
+		}
+	});
+
+	(payload.join_requests || []).forEach(req => {
+		if (req?.steamId && nameMap[req.steamId]) {
+			req.playerName = nameMap[req.steamId];
+		}
+	});
+
+	return payload;
+}
+
+const FACTION_ROLE = {
+	NONE: -1,
+	MEMBER: 0,
+	OFFICER: 1,
+	VICE_LEADER: 2,
+	LEADER: 3
+};
+
+function getRoleNameFromLevel(level) {
+	switch (level) {
+		case FACTION_ROLE.LEADER: return 'Leader';
+		case FACTION_ROLE.VICE_LEADER: return 'Vice Leader';
+		case FACTION_ROLE.OFFICER: return 'Officer';
+		default: return 'Member';
+	}
+}
+
+function getRoleDisplayFromLevel(level, aliases) {
+	if (aliases) {
+		const alias = aliases[String(level)] || aliases[level];
+		if (alias && alias.trim()) {
+			return alias.trim();
+		}
+	}
+	return getRoleNameFromLevel(level);
+}
+
+function buildFactionPermissions(roleLevel) {
+	if (roleLevel == null || roleLevel < FACTION_ROLE.MEMBER) {
+		return {
+			canInvite: false,
+			canAcceptRequests: false,
+			canManageQuests: false,
+			canPromoteOfficer: false,
+			canPromoteViceLeader: false,
+			canTransferLeadership: false,
+			canSetAliases: false,
+			canSetIcon: false
+		};
+	}
+
+	return {
+		canInvite: roleLevel >= FACTION_ROLE.OFFICER,
+		canAcceptRequests: roleLevel >= FACTION_ROLE.OFFICER,
+		canManageQuests: roleLevel >= FACTION_ROLE.VICE_LEADER,
+		canPromoteOfficer: roleLevel >= FACTION_ROLE.VICE_LEADER,
+		canPromoteViceLeader: roleLevel === FACTION_ROLE.LEADER,
+		canTransferLeadership: roleLevel === FACTION_ROLE.LEADER,
+		canSetAliases: roleLevel === FACTION_ROLE.LEADER,
+		canSetIcon: roleLevel === FACTION_ROLE.LEADER
+	};
+}
+
+function normalizeSteamId(value) {
+	if (value === null || value === undefined) return null;
+	if (typeof value === 'string') return value;
+	if (typeof value === 'number' || typeof value === 'bigint') return value.toString();
+	return value.toString();
+}
+
+async function getSteamIdFromAuthCode(authCode) {
+	if (!authCode) return null;
+	const pool = getDbPool();
+	const prefix = tablePrefix;
+	const [rows] = await pool.query(`
+		SELECT CAST(steam_id AS CHAR) AS steam_id
+		FROM ${prefix}player_auth
+		WHERE UPPER(auth_code) = UPPER(?)
+		LIMIT 1
+	`, [authCode.trim()]);
+	return rows.length > 0 ? rows[0].steam_id : null;
+}
 
 // ==================== API ROUTES ====================
 
@@ -1177,10 +1413,10 @@ app.post('/api/player/turn-in-quest', async (req, res) => {
 			return res.status(400).json({ error: 'Quest is not ready to complete. Please complete all objectives first.' });
 		}
 
-		// For faction quests, check if player is leader
+		// For faction quests, check if player is leader or vice leader
 		if (quest.is_faction_quest) {
 			const [factionMembers] = await pool.query(`
-				SELECT faction_id, leader_id
+				SELECT faction_id, leader_id, role_level
 				FROM ${prefix}faction_members
 				WHERE player_id = ?
 				LIMIT 1
@@ -1191,97 +1427,587 @@ app.post('/api/player/turn-in-quest', async (req, res) => {
 			}
 
 			const faction = factionMembers[0];
-			if (faction.leader_id !== playerIdStr) {
-				return res.status(403).json({ error: 'Only faction leader can turn in faction quests' });
+			const isLeader = faction.leader_id === playerIdStr;
+			const isViceLeader = faction.role_level === 2; // VICE_LEADER = 2
+			
+			if (!isLeader && !isViceLeader) {
+				return res.status(403).json({ error: 'Only faction leader or vice leader can turn in faction quests' });
 			}
 		}
 
-		// Call plugin HTTP endpoint to execute turn-in command
+		// Insert turn-in request to database queue (plugin will poll and process)
 		try {
-			const http = require('http');
-			const postData = JSON.stringify({
-				steamId: playerIdStr,
-				questId: questId
-			});
-
-			const options = {
-				hostname: 'localhost',
-				port: 8080,
-				path: '/api/turnin',
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					'Content-Length': Buffer.byteLength(postData)
-				},
-				timeout: 5000
-			};
-
-			const httpRequest = http.request(options, (httpRes) => {
-				let data = '';
-				httpRes.on('data', (chunk) => { data += chunk; });
-				httpRes.on('end', () => {
-					if (httpRes.statusCode === 200) {
-						console.log(`[API] Quest ${questId} turn-in command executed for player ${playerIdStr}`);
-					} else {
-						console.warn(`[API] HTTP request returned status ${httpRes.statusCode}: ${data}`);
-					}
-				});
-			});
-
-			httpRequest.on('error', (err) => {
-				console.warn(`[API] Failed to call plugin HTTP endpoint: ${err.message}`);
-				// Fallback: just mark as completed in database
-				pool.query(`
-					UPDATE ${prefix}quest_progress
-					SET is_active = 0,
-						is_ready_to_complete = 0,
-						last_completed_at = NOW(),
-						updated_at = NOW()
-					WHERE player_id = ? AND quest_id = ?
-				`, [playerIdStr, questId]).catch(e => console.error(`[API] Fallback update failed: ${e.message}`));
-			});
-
-			httpRequest.on('timeout', () => {
-				httpRequest.destroy();
-				console.warn(`[API] HTTP request timeout for quest turn-in`);
-				// Fallback: just mark as completed in database
-				pool.query(`
-					UPDATE ${prefix}quest_progress
-					SET is_active = 0,
-						is_ready_to_complete = 0,
-						last_completed_at = NOW(),
-						updated_at = NOW()
-					WHERE player_id = ? AND quest_id = ?
-				`, [playerIdStr, questId]).catch(e => console.error(`[API] Fallback update failed: ${e.message}`));
-			});
-
-			httpRequest.write(postData);
-			httpRequest.end();
-		} catch (httpError) {
-			console.error(`[API] Error calling plugin HTTP endpoint: ${httpError.message}`);
-			// Fallback: just mark as completed in database
-			await pool.query(`
-				UPDATE ${prefix}quest_progress
-				SET is_active = 0,
-					is_ready_to_complete = 0,
-					last_completed_at = NOW(),
-					updated_at = NOW()
-				WHERE player_id = ? AND quest_id = ?
+			const pool = getDbPool();
+			const prefix = tablePrefix;
+			
+			// Insert into queue table
+			const [result] = await pool.query(`
+				INSERT INTO ${prefix}quest_turnin_queue (steam_id, quest_id, status, created_at)
+				VALUES (?, ?, 'pending', NOW())
 			`, [playerIdStr, questId]);
+
+			console.log(`[API] Quest turn-in request queued: ${questId} for player ${playerIdStr} (queue ID: ${result.insertId})`);
+
+			return res.json({
+				success: true,
+				message: 'Quest turn-in request has been queued. It will be processed within 5 seconds.',
+				questId: questId,
+				playerId: playerIdStr,
+				queueId: result.insertId,
+				note: 'The quest will be turned in automatically. Please wait a moment.'
+			});
+		} catch (error) {
+			console.error(`[API] Error queuing turn-in request: ${error.message}`, error);
+			return res.status(500).json({
+				success: false,
+				error: 'Failed to queue turn-in request: ' + error.message,
+				questId: questId,
+				playerId: playerIdStr,
+				note: 'You can also use the command in-game: /sq turnin ' + questId
+			});
 		}
-
-		console.log(`[API] Quest ${questId} turned in by player ${playerIdStr}`);
-
-		res.json({
-			success: true,
-			message: 'Quest turn-in request submitted! The quest will be turned in automatically when you are online in-game (within 5 seconds).',
-			questId: questId,
-			playerId: playerIdStr,
-			note: 'If you are currently online, the quest will be turned in automatically. Rewards will be given in-game.'
-		});
 	} catch (error) {
 		console.error('Error turning in quest:', error);
 		res.status(500).json({ error: error.message });
+	}
+});
+
+// ==================== FACTION MANAGEMENT (ROLE-BASED) ====================
+
+app.post('/api/player/faction/info', async (req, res) => {
+	try {
+		const code = extractAuthCode(req);
+		if (!code) {
+			return res.status(400).json({ success: false, error: 'code_required' });
+		}
+
+		const steamId = await getSteamIdFromAuthCode(code);
+		if (!steamId) {
+			return res.status(401).json({ success: false, error: 'invalid_code' });
+		}
+
+		const pool = getDbPool();
+		const prefix = tablePrefix;
+
+		const [factionRows] = await pool.query(`
+			SELECT 
+				f.id,
+				f.name,
+				f.tag,
+				f.color,
+				f.icon_url,
+				CAST(f.leader_id AS CHAR) AS leader_id,
+				fs.faction_points,
+				fs.faction_xp,
+				fs.tier,
+				fs.unlock_flags
+			FROM ${prefix}faction_members fm
+			JOIN ${prefix}factions f ON fm.faction_id = f.id
+			LEFT JOIN ${prefix}faction_states fs ON fs.faction_id = f.id
+			WHERE fm.player_id = ?
+			LIMIT 1
+		`, [steamId]);
+
+		if (factionRows.length === 0) {
+			const payload = {
+				success: true,
+				faction: null,
+				role: 'None',
+				role_level: -1,
+				role_display: 'No Faction',
+				permissions: buildFactionPermissions(FACTION_ROLE.NONE),
+				members: [],
+				invitations: [],
+				join_requests: [],
+				aliases: {}
+			};
+			return res.json(payload);
+		}
+
+		const faction = factionRows[0];
+		const factionId = faction.id;
+
+		// Load members
+		const [memberRows] = await pool.query(`
+			SELECT CAST(player_id AS CHAR) AS player_id, role, joined_at
+			FROM ${prefix}faction_members
+			WHERE faction_id = ?
+		`, [factionId]);
+
+		const [aliasRows] = await pool.query(`
+			SELECT role, alias
+			FROM ${prefix}faction_role_aliases
+			WHERE faction_id = ?
+		`, [factionId]);
+
+		const [invitationRows] = await pool.query(`
+			SELECT CAST(invited_player_id AS CHAR) AS invited_player_id, CAST(inviter_id AS CHAR) AS inviter_id, created_at, expires_at
+			FROM ${prefix}faction_invitations
+			WHERE faction_id = ? AND expires_at > NOW()
+		`, [factionId]);
+
+		const [joinRequestRows] = await pool.query(`
+			SELECT CAST(player_id AS CHAR) AS player_id, created_at, expires_at
+			FROM ${prefix}faction_join_requests
+			WHERE faction_id = ? AND expires_at > NOW()
+		`, [factionId]);
+
+		const aliasMap = {};
+		aliasRows.forEach(row => {
+			if (row && row.alias != null) {
+				aliasMap[String(row.role)] = row.alias;
+			}
+		});
+
+		const leaderId = normalizeSteamId(faction.leader_id);
+
+		const members = memberRows.map(row => {
+			const memberSteamId = normalizeSteamId(row.player_id);
+			const roleLevel = typeof row.role === 'number' ? parseInt(row.role, 10) : parseInt(row.role || 0, 10);
+			const normalizedRole = Number.isNaN(roleLevel) ? FACTION_ROLE.MEMBER : roleLevel;
+			return {
+				steamId: memberSteamId,
+				role: getRoleNameFromLevel(normalizedRole),
+				role_level: normalizedRole,
+				role_display: getRoleDisplayFromLevel(normalizedRole, aliasMap),
+				is_leader: leaderId === memberSteamId,
+				joined_at: row.joined_at
+			};
+		}).sort((a, b) => {
+			if (b.role_level !== a.role_level) return b.role_level - a.role_level;
+			return (a.steamId || '').localeCompare(b.steamId || '');
+		});
+
+		const playerMember = members.find(m => m.steamId === steamId);
+		const playerRoleLevel = playerMember ? playerMember.role_level : FACTION_ROLE.MEMBER;
+
+		const invitations = invitationRows.map(inv => ({
+			steamId: normalizeSteamId(inv.invited_player_id),
+			inviterId: normalizeSteamId(inv.inviter_id),
+			createdAt: inv.created_at,
+			expiresAt: inv.expires_at
+		}));
+
+		const joinRequests = joinRequestRows.map(req => ({
+			steamId: normalizeSteamId(req.player_id),
+			createdAt: req.created_at,
+			expiresAt: req.expires_at
+		}));
+
+		const payload = await attachNamesToFactionData({
+			success: true,
+			faction: {
+				id: faction.id,
+				name: faction.name,
+				tag: faction.tag,
+				color: faction.color,
+				iconUrl: faction.icon_url,
+				leaderId: leaderId,
+				faction_points: faction.faction_points || 0,
+				faction_xp: faction.faction_xp || 0,
+				tier: faction.tier || 1,
+				unlock_flags: faction.unlock_flags || null
+			},
+			role: getRoleNameFromLevel(playerRoleLevel),
+			role_level: playerRoleLevel,
+			role_display: getRoleDisplayFromLevel(playerRoleLevel, aliasMap),
+			permissions: buildFactionPermissions(playerRoleLevel),
+			members,
+			invitations,
+			join_requests: joinRequests,
+			aliases: aliasMap
+		});
+
+		return res.json(payload);
+	} catch (error) {
+		console.error('[Faction] /api/player/faction/info error:', error);
+		return res.status(500).json({ success: false, error: 'internal_error', message: error.message });
+	}
+});
+
+app.post('/api/player/faction/invite', async (req, res) => {
+	try {
+		const code = extractAuthCode(req);
+		const targetSteamId = req.body?.targetSteamId || req.body?.target;
+
+		if (!code || !targetSteamId) {
+			return res.status(400).json({ success: false, error: 'code_and_target_required' });
+		}
+
+		const pluginRes = await callPluginApi('/api/faction/invite', { code, targetSteamId });
+		return res.status(pluginRes.statusCode || 200).json(pluginRes.data || { success: false });
+	} catch (error) {
+		console.error('[Faction] /api/player/faction/invite error:', error);
+		return res.status(500).json({ success: false, error: 'internal_error', message: error.message });
+	}
+});
+
+app.post('/api/player/faction/accept-request', async (req, res) => {
+	try {
+		const code = extractAuthCode(req);
+		const targetSteamId = req.body?.targetSteamId || req.body?.target;
+
+		if (!code || !targetSteamId) {
+			return res.status(400).json({ success: false, error: 'code_and_target_required' });
+		}
+
+		const pluginRes = await callPluginApi('/api/faction/accept-request', { code, targetSteamId });
+		return res.status(pluginRes.statusCode || 200).json(pluginRes.data || { success: false });
+	} catch (error) {
+		console.error('[Faction] /api/player/faction/accept-request error:', error);
+		return res.status(500).json({ success: false, error: 'internal_error', message: error.message });
+	}
+});
+
+app.post('/api/player/faction/reject-request', async (req, res) => {
+	try {
+		const code = extractAuthCode(req);
+		const targetSteamId = req.body?.targetSteamId || req.body?.target;
+
+		if (!code || !targetSteamId) {
+			return res.status(400).json({ success: false, error: 'code_and_target_required' });
+		}
+
+		const pluginRes = await callPluginApi('/api/faction/reject-request', { code, targetSteamId });
+		return res.status(pluginRes.statusCode || 200).json(pluginRes.data || { success: false });
+	} catch (error) {
+		console.error('[Faction] /api/player/faction/reject-request error:', error);
+		return res.status(500).json({ success: false, error: 'internal_error', message: error.message });
+	}
+});
+
+app.post('/api/player/faction/set-role', async (req, res) => {
+	try {
+		const code = extractAuthCode(req);
+		const targetSteamId = req.body?.targetSteamId || req.body?.target;
+		const role = req.body?.role;
+
+		if (!code || !targetSteamId || typeof role === 'undefined') {
+			return res.status(400).json({ success: false, error: 'code_target_role_required' });
+		}
+
+		// Validate and normalize role value
+		// Accept both number and string (role name or level)
+		let roleLevel;
+		if (typeof role === 'number') {
+			roleLevel = role;
+		} else if (typeof role === 'string') {
+			// Try to parse as number first
+			const parsed = parseInt(role, 10);
+			if (!isNaN(parsed)) {
+				roleLevel = parsed;
+			} else {
+				// Try to match role name
+				const roleNameMap = {
+					'member': FACTION_ROLE.MEMBER,
+					'officer': FACTION_ROLE.OFFICER,
+					'viceleader': FACTION_ROLE.VICE_LEADER,
+					'vice_leader': FACTION_ROLE.VICE_LEADER,
+					'leader': FACTION_ROLE.LEADER
+				};
+				roleLevel = roleNameMap[role.toLowerCase()];
+			}
+		} else {
+			roleLevel = undefined;
+		}
+
+		if (roleLevel === undefined || isNaN(roleLevel) || roleLevel < FACTION_ROLE.MEMBER || roleLevel > FACTION_ROLE.LEADER) {
+			return res.status(400).json({ 
+				success: false, 
+				error: 'invalid_role', 
+				message: `Invalid role value. Expected number (0-3) or role name (Member, Officer, ViceLeader, Leader), got: ${JSON.stringify(role)}` 
+			});
+		}
+
+		// Get SteamID from auth code to verify permissions
+		const steamId = await getSteamIdFromAuthCode(code);
+		if (!steamId) {
+			return res.status(401).json({ success: false, error: 'invalid_code' });
+		}
+
+		// Check if user has permission to set this role
+		const pool = getDbPool();
+		const prefix = tablePrefix;
+
+		// Get user's faction and role
+		const [userFaction] = await pool.query(`
+			SELECT fm.faction_id, fm.role, f.leader_id
+			FROM ${prefix}faction_members fm
+			JOIN ${prefix}factions f ON fm.faction_id = f.id
+			WHERE fm.player_id = ?
+			LIMIT 1
+		`, [steamId]);
+
+		if (userFaction.length === 0) {
+			return res.status(403).json({ success: false, error: 'not_in_faction' });
+		}
+
+		const userFactionData = userFaction[0];
+		const userRoleLevel = typeof userFactionData.role === 'number' 
+			? userFactionData.role 
+			: parseInt(userFactionData.role || 0, 10);
+		const isLeader = normalizeSteamId(userFactionData.leader_id) === normalizeSteamId(steamId);
+
+		// Check if target is in same faction
+		const [targetFaction] = await pool.query(`
+			SELECT faction_id, role
+			FROM ${prefix}faction_members
+			WHERE player_id = ? AND faction_id = ?
+			LIMIT 1
+		`, [targetSteamId, userFactionData.faction_id]);
+
+		if (targetFaction.length === 0) {
+			return res.status(404).json({ success: false, error: 'target_not_in_faction' });
+		}
+
+		// Permission checks
+		const canPromoteOfficer = userRoleLevel >= FACTION_ROLE.VICE_LEADER;
+		const canPromoteViceLeader = isLeader;
+		const canTransferLeadership = isLeader;
+
+		let canSetThisRole = false;
+		if (roleLevel === FACTION_ROLE.MEMBER) {
+			canSetThisRole = canPromoteOfficer || canPromoteViceLeader; // Can demote
+		} else if (roleLevel === FACTION_ROLE.OFFICER) {
+			canSetThisRole = canPromoteOfficer;
+		} else if (roleLevel === FACTION_ROLE.VICE_LEADER) {
+			canSetThisRole = canPromoteViceLeader;
+		} else if (roleLevel === FACTION_ROLE.LEADER) {
+			canSetThisRole = canTransferLeadership;
+		}
+
+		if (!canSetThisRole) {
+			return res.status(403).json({ 
+				success: false, 
+				error: 'insufficient_permissions',
+				message: 'You do not have permission to set this role'
+			});
+		}
+
+		// Prevent setting yourself as non-leader if you're the leader
+		if (normalizeSteamId(targetSteamId) === normalizeSteamId(steamId) && isLeader && roleLevel !== FACTION_ROLE.LEADER) {
+			return res.status(400).json({ 
+				success: false, 
+				error: 'cannot_demote_self',
+				message: 'Leader cannot demote themselves. Transfer leadership first.'
+			});
+		}
+
+		// Try to call plugin API first
+		let pluginRes;
+		try {
+			pluginRes = await callPluginApi('/api/faction/set-role', { code, targetSteamId, role: roleLevel });
+			
+			// If plugin API succeeds, return its response
+			if (pluginRes.statusCode === 200 && pluginRes.data && pluginRes.data.success) {
+				return res.status(200).json(pluginRes.data);
+			}
+			
+			// If plugin API fails but returns data, log and try database update as fallback
+			if (pluginRes.data && pluginRes.data.error) {
+				console.warn(`[Faction] Plugin API error for set-role: ${pluginRes.data.error}, attempting database fallback`);
+			}
+		} catch (pluginError) {
+			console.warn(`[Faction] Plugin API call failed: ${pluginError.message}, attempting database fallback`);
+		}
+
+		// Fallback: Update database directly if plugin API is unavailable
+		try {
+			await pool.query(`
+				UPDATE ${prefix}faction_members
+				SET role = ?
+				WHERE player_id = ? AND faction_id = ?
+			`, [roleLevel, targetSteamId, userFactionData.faction_id]);
+
+			// If setting as leader, also update faction leader_id
+			if (roleLevel === FACTION_ROLE.LEADER) {
+				await pool.query(`
+					UPDATE ${prefix}factions
+					SET leader_id = ?
+					WHERE id = ?
+				`, [targetSteamId, userFactionData.faction_id]);
+			}
+
+			return res.status(200).json({ 
+				success: true, 
+				message: `Role set to ${getRoleNameFromLevel(roleLevel)} successfully`,
+				role: getRoleNameFromLevel(roleLevel),
+				role_level: roleLevel
+			});
+		} catch (dbError) {
+			console.error('[Faction] Database error when setting role:', dbError);
+			return res.status(500).json({ 
+				success: false, 
+				error: 'database_error', 
+				message: dbError.message 
+			});
+		}
+	} catch (error) {
+		console.error('[Faction] /api/player/faction/set-role error:', error);
+		return res.status(500).json({ success: false, error: 'internal_error', message: error.message });
+	}
+});
+
+app.post('/api/player/faction/set-alias', async (req, res) => {
+	try {
+		const code = extractAuthCode(req);
+		const role = req.body?.role;
+		const alias = req.body?.alias || '';
+
+		if (!code || typeof role === 'undefined') {
+			return res.status(400).json({ success: false, error: 'code_and_role_required' });
+		}
+
+		const pluginRes = await callPluginApi('/api/faction/set-alias', { code, role, alias });
+		return res.status(pluginRes.statusCode || 200).json(pluginRes.data || { success: false });
+	} catch (error) {
+		console.error('[Faction] /api/player/faction/set-alias error:', error);
+		return res.status(500).json({ success: false, error: 'internal_error', message: error.message });
+	}
+});
+
+// Get available faction quests for assignment
+app.post('/api/player/faction/available-quests', async (req, res) => {
+	try {
+		const code = extractAuthCode(req);
+		if (!code) {
+			return res.status(400).json({ success: false, error: 'code_required' });
+		}
+
+		const steamId = await getSteamIdFromAuthCode(code);
+		if (!steamId) {
+			return res.status(401).json({ success: false, error: 'invalid_code' });
+		}
+
+		const pool = getDbPool();
+		const prefix = tablePrefix;
+
+		// Get player's faction and tier
+		const [factionRows] = await pool.query(`
+			SELECT f.id, fs.tier
+			FROM ${prefix}faction_members fm
+			JOIN ${prefix}factions f ON fm.faction_id = f.id
+			LEFT JOIN ${prefix}faction_states fs ON fs.faction_id = f.id
+			WHERE fm.player_id = ?
+			LIMIT 1
+		`, [steamId]);
+
+		if (factionRows.length === 0) {
+			return res.status(403).json({ success: false, error: 'not_in_faction' });
+		}
+
+		const factionTier = factionRows[0].tier || 1;
+
+		// Get available faction quests (is_faction_quest = 1, enabled = 1, tier <= faction tier)
+		const [quests] = await pool.query(`
+			SELECT id, display_name, description, tier, is_faction_quest, enabled
+			FROM ${prefix}quest_definitions
+			WHERE is_faction_quest = 1 
+			AND enabled = 1
+			AND tier <= ?
+			ORDER BY tier, display_name
+		`, [factionTier]);
+
+		res.json({
+			success: true,
+			quests: quests.map(q => ({
+				id: q.id,
+				displayName: q.display_name,
+				description: q.description,
+				tier: q.tier || 1
+			}))
+		});
+	} catch (error) {
+		console.error('[Faction] /api/player/faction/available-quests error:', error);
+		return res.status(500).json({ success: false, error: 'internal_error', message: error.message });
+	}
+});
+
+// Assign quest to faction members
+app.post('/api/player/faction/assign-quest', async (req, res) => {
+	try {
+		const code = extractAuthCode(req);
+		const { questId, assignedMembers } = req.body;
+
+		if (!code || !questId || !assignedMembers || !Array.isArray(assignedMembers) || assignedMembers.length === 0) {
+			return res.status(400).json({ success: false, error: 'code_quest_members_required' });
+		}
+
+		const steamId = await getSteamIdFromAuthCode(code);
+		if (!steamId) {
+			return res.status(401).json({ success: false, error: 'invalid_code' });
+		}
+
+		const pool = getDbPool();
+		const prefix = tablePrefix;
+
+		// Get player's faction
+		const [factionRows] = await pool.query(`
+			SELECT fm.faction_id, fm.role, f.leader_id, fs.tier
+			FROM ${prefix}faction_members fm
+			JOIN ${prefix}factions f ON fm.faction_id = f.id
+			LEFT JOIN ${prefix}faction_states fs ON fs.faction_id = f.id
+			WHERE fm.player_id = ?
+			LIMIT 1
+		`, [steamId]);
+
+		if (factionRows.length === 0) {
+			return res.status(403).json({ success: false, error: 'not_in_faction' });
+		}
+
+		const factionData = factionRows[0];
+		const userRoleLevel = typeof factionData.role === 'number' ? factionData.role : parseInt(factionData.role || 0, 10);
+		const isLeader = normalizeSteamId(factionData.leader_id) === normalizeSteamId(steamId);
+
+		// Check permission (Vice Leader or Leader can assign quests)
+		if (userRoleLevel < FACTION_ROLE.VICE_LEADER && !isLeader) {
+			return res.status(403).json({ success: false, error: 'insufficient_permissions', message: 'Only Vice Leader or Leader can assign quests' });
+		}
+
+		// Check if quest exists and is valid
+		const [quests] = await pool.query(`
+			SELECT id, display_name, tier, is_faction_quest, enabled
+			FROM ${prefix}quest_definitions
+			WHERE id = ? AND is_faction_quest = 1 AND enabled = 1
+		`, [questId]);
+
+		if (quests.length === 0) {
+			return res.status(404).json({ success: false, error: 'quest_not_found' });
+		}
+
+		const quest = quests[0];
+		if (quest.tier > (factionData.tier || 1)) {
+			return res.status(400).json({ success: false, error: 'quest_tier_too_high', message: `Quest requires Tier ${quest.tier}, but faction is only Tier ${factionData.tier || 1}` });
+		}
+
+		// Verify all members are in the same faction
+		const placeholders = assignedMembers.map(() => '?').join(',');
+		const [memberRows] = await pool.query(`
+			SELECT player_id
+			FROM ${prefix}faction_members
+			WHERE faction_id = ? AND player_id IN (${placeholders})
+		`, [factionData.faction_id, ...assignedMembers]);
+
+		if (memberRows.length !== assignedMembers.length) {
+			return res.status(400).json({ success: false, error: 'invalid_members', message: 'Some members are not in your faction' });
+		}
+
+		// Call plugin API to assign quest
+		const pluginRes = await callPluginApi('/api/faction/assign-quest', {
+			code,
+			questId,
+			assignedMembers
+		});
+
+		if (pluginRes.statusCode === 200 && pluginRes.data && pluginRes.data.success) {
+			return res.status(200).json(pluginRes.data);
+		}
+
+		// If plugin API fails, return error
+		return res.status(pluginRes.statusCode || 500).json(pluginRes.data || { success: false, error: 'plugin_api_error' });
+	} catch (error) {
+		console.error('[Faction] /api/player/faction/assign-quest error:', error);
+		return res.status(500).json({ success: false, error: 'internal_error', message: error.message });
 	}
 });
 

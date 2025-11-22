@@ -1,8 +1,165 @@
 const API_BASE = '/api';
 
+// Auto-refresh interval for My Quests page
+let myQuestsRefreshInterval = null;
+
+// Dark mode management
+function initDarkMode() {
+	const isDark = localStorage.getItem('darkMode') === 'true';
+	if (isDark) {
+		document.documentElement.classList.add('dark');
+		updateDarkModeIcon(true);
+	} else {
+		document.documentElement.classList.remove('dark');
+		updateDarkModeIcon(false);
+	}
+}
+
+function toggleDarkMode() {
+	const isDark = document.documentElement.classList.toggle('dark');
+	localStorage.setItem('darkMode', isDark.toString());
+	updateDarkModeIcon(isDark);
+}
+
+function updateDarkModeIcon(isDark) {
+	const icon = document.getElementById('dark-mode-icon');
+	if (!icon) return;
+	
+	if (isDark) {
+		// Sun icon for light mode
+		icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>';
+	} else {
+		// Moon icon for dark mode
+		icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>';
+	}
+}
+
+// Initialize dark mode on page load
+initDarkMode();
+
 // Player authentication
 let playerAuthToken = localStorage.getItem('playerAuthToken');
 let playerInfo = null;
+let currentFactionData = null;
+
+const FACTION_ROLE_LEVELS = {
+	'-1': 'None',
+	'0': 'Member',
+	'1': 'Officer',
+	'2': 'ViceLeader',
+	'3': 'Leader'
+};
+
+const FACTION_ROLE_ORDER = [
+	{ key: 'Leader', level: 3 },
+	{ key: 'ViceLeader', level: 2 },
+	{ key: 'Officer', level: 1 },
+	{ key: 'Member', level: 0 }
+];
+
+function showToast(message, type = 'info') {
+	const container = document.getElementById('toast-container');
+	if (!container) return;
+
+	const toastConfig = {
+		success: {
+			bg: 'bg-gradient-to-r from-emerald-500 to-green-600',
+			icon: `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+			</svg>`,
+			border: 'border-emerald-400'
+		},
+		error: {
+			bg: 'bg-gradient-to-r from-red-500 to-rose-600',
+			icon: `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+			</svg>`,
+			border: 'border-red-400'
+		},
+		warning: {
+			bg: 'bg-gradient-to-r from-yellow-500 to-amber-600',
+			icon: `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+			</svg>`,
+			border: 'border-yellow-400'
+		},
+		info: {
+			bg: 'bg-gradient-to-r from-indigo-500 to-blue-600',
+			icon: `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+			</svg>`,
+			border: 'border-indigo-400'
+		}
+	};
+
+	const config = toastConfig[type] || toastConfig.info;
+	const toastId = 'toast-' + Date.now();
+
+	const toast = document.createElement('div');
+	toast.id = toastId;
+	toast.className = `relative flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl pointer-events-auto border-l-4 ${config.bg} ${config.border} text-white min-w-[300px] max-w-md transform translate-x-full opacity-0 transition-all duration-300 ease-out`;
+	
+	toast.innerHTML = `
+		<div class="flex-shrink-0 ${type === 'success' ? 'animate-bounce' : ''}">
+			${config.icon}
+		</div>
+		<div class="flex-1">
+			<p class="text-sm font-medium">${escapeHtml(message)}</p>
+		</div>
+		<button onclick="closeToast('${toastId}')" class="flex-shrink-0 hover:bg-white/20 rounded-full p-1 transition-colors">
+			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+			</svg>
+		</button>
+		<div class="absolute bottom-0 left-0 right-0 h-1 bg-white/30 rounded-b-xl overflow-hidden">
+			<div class="h-full bg-white/50 toast-progress rounded-b-xl" style="width: 100%; animation: shrink 3s linear forwards;"></div>
+		</div>
+	`;
+
+	container.appendChild(toast);
+
+	// Trigger animation
+	setTimeout(() => {
+		toast.classList.remove('translate-x-full', 'opacity-0');
+		toast.classList.add('translate-x-0', 'opacity-100');
+	}, 10);
+
+	// Auto remove after 3 seconds
+	setTimeout(() => {
+		closeToast(toastId);
+	}, 3000);
+}
+
+function closeToast(toastId) {
+	const toast = document.getElementById(toastId);
+	if (!toast) return;
+	
+	toast.classList.remove('translate-x-0', 'opacity-100');
+	toast.classList.add('translate-x-full', 'opacity-0');
+	
+	setTimeout(() => {
+		if (toast.parentNode) {
+			toast.parentNode.removeChild(toast);
+		}
+	}, 300);
+}
+
+// Make closeToast globally accessible
+window.closeToast = closeToast;
+
+function copyToClipboard(text) {
+	if (!navigator.clipboard) {
+		const textarea = document.createElement('textarea');
+		textarea.value = text;
+		document.body.appendChild(textarea);
+		textarea.select();
+		document.execCommand('copy');
+		document.body.removeChild(textarea);
+	} else {
+		navigator.clipboard.writeText(text).catch(() => {});
+	}
+	showToast('Copied to clipboard', 'success');
+}
 
 // Admin mode check
 function isAdminMode() {
@@ -38,10 +195,46 @@ async function loginPlayer(authCode) {
 
 // Logout function
 function logoutPlayer() {
+	// Clear refresh interval
+	if (myQuestsRefreshInterval) {
+		clearInterval(myQuestsRefreshInterval);
+		myQuestsRefreshInterval = null;
+	}
+	
 	playerAuthToken = null;
 	playerInfo = null;
 	localStorage.removeItem('playerAuthToken');
 	showPage('login', null);
+}
+
+async function postPlayerFactionEndpoint(path, payload = {}) {
+	if (!isPlayerLoggedIn()) {
+		throw new Error('Login terlebih dahulu untuk mengelola faction.');
+	}
+
+	const body = { ...payload, code: playerAuthToken };
+	const res = await fetch(`${API_BASE}${path}`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			'X-Auth-Code': playerAuthToken
+		},
+		body: JSON.stringify(body)
+	});
+
+	let data = null;
+	try {
+		data = await res.json();
+	} catch (err) {
+		// ignore json parse errors, handled below
+	}
+
+	if (!res.ok || (data && data.success === false)) {
+		const message = (data && (data.message || data.error)) || `HTTP ${res.status}`;
+		throw new Error(message);
+	}
+
+	return data;
 }
 
 // Check if player is logged in
@@ -59,13 +252,41 @@ function initAdminMode() {
 	}
 }
 
+// Sidebar toggle
+function toggleSidebar() {
+	const sidebar = document.getElementById('sidebar');
+	const overlay = document.getElementById('sidebar-overlay');
+	if (sidebar && overlay) {
+		const isOpen = !sidebar.classList.contains('-translate-x-full');
+		if (isOpen) {
+			sidebar.classList.add('-translate-x-full');
+			overlay.classList.add('hidden');
+		} else {
+			sidebar.classList.remove('-translate-x-full');
+			overlay.classList.remove('hidden');
+		}
+	}
+}
+
+// Close sidebar on mobile after navigation
+function closeSidebarOnMobile() {
+	if (window.innerWidth < 1024) {
+		const sidebar = document.getElementById('sidebar');
+		const overlay = document.getElementById('sidebar-overlay');
+		if (sidebar && overlay) {
+			sidebar.classList.add('-translate-x-full');
+			overlay.classList.add('hidden');
+		}
+	}
+}
+
 // Navigation
 function showPage(page, btn) {
 	document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
 	document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
 	
 	// Check if login required for player pages
-	if (page === 'my-quests' && !isPlayerLoggedIn() && !isAdminMode()) {
+	if ((page === 'my-quests' || page === 'my-faction') && !isPlayerLoggedIn() && !isAdminMode()) {
 		showPage('login', null);
 		return;
 	}
@@ -73,18 +294,56 @@ function showPage(page, btn) {
 	document.getElementById(`${page}-page`).classList.remove('hidden');
 	if (btn) {
 		btn.classList.add('active');
+	} else {
+		const activeBtn = document.querySelector(`.nav-btn[data-page="${page}"]`);
+		if (activeBtn) activeBtn.classList.add('active');
+	}
+
+	// Update page title in top bar
+	const pageTitles = {
+		'dashboard': 'Dashboard',
+		'factions': 'Factions',
+		'quests': 'Quests',
+		'my-quests': 'My Quests',
+		'my-faction': 'My Faction',
+		'shop': 'Shop',
+		'commands': 'Commands',
+		'players': 'Players',
+		'login': 'Login'
+	};
+	const titleElement = document.querySelector('nav h1');
+	if (titleElement && pageTitles[page]) {
+		titleElement.textContent = pageTitles[page];
 	}
 	
+	// Clear any existing refresh intervals
+	if (myQuestsRefreshInterval) {
+		clearInterval(myQuestsRefreshInterval);
+		myQuestsRefreshInterval = null;
+	}
+
 	if (page === 'dashboard') loadDashboard();
 	else if (page === 'factions') loadFactions();
 	else if (page === 'quests') loadQuests();
 	else if (page === 'shop') loadShopItems();
 	else if (page === 'players') loadPlayers();
-	else if (page === 'my-quests') loadMyQuests();
+	else if (page === 'my-quests') {
+		loadMyQuests();
+		// Setup auto-refresh every 5 seconds for real-time updates
+		if (isPlayerLoggedIn()) {
+			myQuestsRefreshInterval = setInterval(() => {
+				loadMyQuests();
+			}, 5000); // Refresh every 5 seconds
+		}
+	}
+	else if (page === 'my-faction') loadMyFaction();
 	else if (page === 'commands') loadCommands();
 	else if (page === 'login') {
 		// Login page doesn't need to load anything
 	}
+
+	// Close sidebar on mobile after navigation
+	closeSidebarOnMobile();
 }
 
 // Dashboard
@@ -1451,6 +1710,14 @@ async function viewPlayer(id) {
 }
 
 // Search functionality
+// Cleanup intervals on page unload
+window.addEventListener('beforeunload', () => {
+	if (myQuestsRefreshInterval) {
+		clearInterval(myQuestsRefreshInterval);
+		myQuestsRefreshInterval = null;
+	}
+});
+
 document.addEventListener('DOMContentLoaded', () => {
 	// Initialize admin mode visibility
 	initAdminMode();
@@ -1591,6 +1858,9 @@ document.addEventListener('DOMContentLoaded', () => {
 function updatePlayerUI() {
 	const playerInfoEl = document.getElementById('player-info');
 	const logoutBtn = document.getElementById('logout-btn');
+	const sidebarUserInfo = document.getElementById('sidebar-user-info');
+	const sidebarPlayerInfo = document.getElementById('sidebar-player-info');
+	const sidebarLogoutBtn = document.getElementById('sidebar-logout-btn');
 	
 	if (isPlayerLoggedIn() && playerInfo) {
 		if (playerInfoEl) {
@@ -1600,9 +1870,20 @@ function updatePlayerUI() {
 		if (logoutBtn) {
 			logoutBtn.classList.remove('hidden');
 		}
+		if (sidebarUserInfo) {
+			sidebarUserInfo.classList.remove('hidden');
+		}
+		if (sidebarPlayerInfo) {
+			sidebarPlayerInfo.textContent = `Logged in as: ${playerInfo.playerName}`;
+		}
+		if (sidebarLogoutBtn) {
+			sidebarLogoutBtn.classList.remove('hidden');
+		}
 	} else {
 		if (playerInfoEl) playerInfoEl.classList.add('hidden');
 		if (logoutBtn) logoutBtn.classList.add('hidden');
+		if (sidebarUserInfo) sidebarUserInfo.classList.add('hidden');
+		if (sidebarLogoutBtn) sidebarLogoutBtn.classList.add('hidden');
 	}
 }
 
@@ -1781,11 +2062,11 @@ async function assignQuest(questId) {
 // Turn in quest
 async function turnInQuest(questId) {
 	if (!isPlayerLoggedIn()) {
-		alert('Please login first');
+		showToast('Please login first', 'error');
 		return;
 	}
 	
-	if (!confirm('Are you sure you want to turn in this quest? You will need to use /sq turnin command in-game to receive rewards.')) {
+	if (!confirm('Are you sure you want to turn in this quest? The quest will be turned in automatically and rewards will be given in-game.')) {
 		return;
 	}
 	
@@ -1801,14 +2082,681 @@ async function turnInQuest(questId) {
 		
 		const data = await res.json();
 		if (data.success) {
-			alert(data.message || 'Quest turned in successfully! Please use /sq turnin command in-game to receive rewards.');
-			loadMyQuests(); // Reload quests
+			showToast(data.message || 'Quest turned in successfully! Rewards have been given in-game.', 'success');
+			// Refresh quests immediately for real-time update
+			setTimeout(() => {
+				loadMyQuests();
+			}, 300); // Small delay to ensure server has processed the turn-in
 		} else {
-			alert('Failed to turn in quest: ' + (data.error || 'Unknown error'));
+			const errorMsg = data.error || 'Unknown error';
+			const noteMsg = data.note ? ' - ' + data.note : '';
+			showToast('Failed to turn in quest: ' + errorMsg + noteMsg, 'error');
 		}
 	} catch (error) {
 		console.error('Failed to turn in quest:', error);
-		alert('Failed to turn in quest: ' + error.message);
+		showToast('Failed to turn in quest: ' + error.message, 'error');
+	}
+}
+
+function getRoleNameByLevel(value) {
+	if (value === null || typeof value === 'undefined') return 'Member';
+	if (typeof value === 'string' && isNaN(Number(value))) {
+		return value;
+	}
+	const key = String(value);
+	return FACTION_ROLE_LEVELS[key] || 'Member';
+}
+
+function getRoleAliasForLevel(level, aliases = {}) {
+	const key = String(level);
+	return aliases[key] || getRoleNameByLevel(level);
+}
+
+function renderPermissionBadges(permissions = {}) {
+	const rows = [
+		{ key: 'canInvite', label: 'Invite Members' },
+		{ key: 'canAcceptRequests', label: 'Approve Requests' },
+		{ key: 'canManageQuests', label: 'Manage Faction Quests' },
+		{ key: 'canPromoteOfficer', label: 'Promote to Officer' },
+		{ key: 'canPromoteViceLeader', label: 'Promote to Vice Leader' },
+		{ key: 'canTransferLeadership', label: 'Transfer Leadership' },
+		{ key: 'canSetAliases', label: 'Set Role Aliases' }
+	];
+
+	return rows.map(row => {
+		const enabled = permissions[row.key];
+		return `
+			<div class="px-3 py-2 rounded-lg border text-xs font-medium flex items-center justify-between ${enabled ? 'border-green-300 bg-green-50 text-green-800' : 'border-gray-200 text-gray-500 bg-gray-50'}">
+				<span>${row.label}</span>
+				${enabled ? '<span class="text-green-600 font-semibold">✔</span>' : '<span class="text-gray-400 font-semibold">✕</span>'}
+			</div>
+		`;
+	}).join('');
+}
+
+function formatFactionTimestamp(value) {
+	if (!value) return '-';
+	try {
+		const date = new Date(value);
+		if (isNaN(date.getTime())) return value;
+		return date.toLocaleString();
+	} catch {
+		return value;
+	}
+}
+
+function shortenSteamId(steamId) {
+	if (!steamId) return 'Unknown';
+	return steamId.length > 10 ? `${steamId.slice(0, 6)}...${steamId.slice(-4)}` : steamId;
+}
+
+function canSetRole(roleKey, permissions = {}) {
+	const normalized = (roleKey || '').toLowerCase();
+	if (normalized === 'member') return permissions.canPromoteOfficer || permissions.canPromoteViceLeader || permissions.canTransferLeadership;
+	if (normalized === 'officer') return permissions.canPromoteOfficer;
+	if (normalized === 'viceleader') return permissions.canPromoteViceLeader;
+	if (normalized === 'leader') return permissions.canTransferLeadership;
+	return false;
+}
+
+function getRoleOptionsForSelect(currentRole, permissions) {
+	const options = [];
+	['Member', 'Officer', 'ViceLeader', 'Leader'].forEach(role => {
+		if (role === currentRole) {
+			options.push({ role, disabled: true });
+			return;
+		}
+		if (canSetRole(role, permissions)) {
+			options.push({ role });
+		}
+	});
+	return options;
+}
+
+function formatMemberLabel(member) {
+	if (!member) return 'Unknown';
+	if (member.playerName) return `${member.playerName} (${shortenSteamId(member.steamId)})`;
+	return shortenSteamId(member.steamId);
+}
+
+// My Faction (role-based management)
+async function loadMyFaction(silent = false) {
+	const container = document.getElementById('my-faction-content');
+	if (!container) return;
+
+	if (!isPlayerLoggedIn()) {
+		container.innerHTML = `
+			<div class="card rounded-lg p-6">
+				<p class="text-sm text-gray-600 dark:text-gray-300">Silakan login terlebih dahulu untuk mengelola faction kamu.</p>
+			</div>
+		`;
+		return;
+	}
+
+	if (!silent) {
+		container.innerHTML = `
+			<div class="card rounded-lg p-6">
+				<p class="text-sm text-gray-600 dark:text-gray-300">Loading faction data...</p>
+			</div>
+		`;
+	}
+
+	try {
+		const res = await fetch(`${API_BASE}/player/faction/info`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'X-Auth-Code': playerAuthToken
+			},
+			body: JSON.stringify({ code: playerAuthToken })
+		});
+
+		const data = await res.json();
+		currentFactionData = data;
+
+		if (!res.ok || !data.success) {
+			const message = data?.message || data?.error || 'Gagal memuat data faction.';
+		if (!silent) {
+			container.innerHTML = `
+				<div class="card rounded-lg p-6 border border-red-200 bg-red-50 text-sm text-red-700">
+					${escapeHtml(message)}
+				</div>
+			`;
+		} else {
+			showToast(message, 'error');
+		}
+			return;
+		}
+
+		renderMyFaction(data);
+	} catch (error) {
+		console.error('Failed to load faction info:', error);
+		if (!silent) {
+			container.innerHTML = `
+				<div class="card rounded-lg p-6 border border-red-200 bg-red-50 text-sm text-red-700">
+					Tidak dapat mengambil data faction: ${escapeHtml(error.message)}
+				</div>
+			`;
+		} else {
+			showToast('Gagal refresh faction: ' + error.message, 'error');
+		}
+	}
+}
+
+function renderMyFaction(data) {
+	const container = document.getElementById('my-faction-content');
+	if (!container) return;
+
+	if (!data.faction) {
+		container.innerHTML = `
+			<div class="card rounded-lg p-6 border border-yellow-200 bg-yellow-50 text-sm text-yellow-800">
+				Kamu belum berada di faction mana pun. Masuk ke dalam faction untuk melihat panel ini.
+			</div>
+		`;
+		return;
+	}
+
+	const faction = data.faction;
+	const permissions = data.permissions || {};
+	const members = data.members || [];
+	const aliases = data.aliases || {};
+	const joinRequests = data.join_requests || [];
+	const invitations = data.invitations || [];
+	const myRoleDisplay = data.role_display || getRoleNameByLevel(data.role_level);
+	const factionColor = faction.color || '#6366f1';
+
+	const infoCard = `
+		<div class="card rounded-lg p-6">
+			<div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+				<div>
+					<p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Faction</p>
+					<div class="flex items-center gap-2">
+						<h3 class="text-xl font-semibold text-gray-900 dark:text-white">${escapeHtml(faction.name || faction.id)}</h3>
+						${faction.tag ? `<span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-200">${escapeHtml(faction.tag)}</span>` : ''}
+					</div>
+					<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Role kamu: <span class="font-semibold text-indigo-600 dark:text-indigo-400">${escapeHtml(myRoleDisplay)}</span></p>
+				</div>
+				<div class="flex items-center gap-3">
+					<div class="hidden sm:flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+						<div class="w-3 h-3 rounded-full border border-gray-300" style="background-color: ${factionColor};"></div>
+						<span>${factionColor}</span>
+					</div>
+					<button type="button" class="px-3 py-2 text-xs font-semibold rounded-md border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700" onclick="loadMyFaction(true)">
+						Refresh
+					</button>
+				</div>
+			</div>
+			<div class="mt-6 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+				<div class="p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800">
+					<p class="text-xs text-gray-500 dark:text-gray-400">Members</p>
+					<p class="text-lg font-semibold text-gray-900 dark:text-white">${members.length}</p>
+				</div>
+				<div class="p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800">
+					<p class="text-xs text-gray-500 dark:text-gray-400">Invitations</p>
+					<p class="text-lg font-semibold text-gray-900 dark:text-white">${invitations.length}</p>
+				</div>
+				<div class="p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800">
+					<p class="text-xs text-gray-500 dark:text-gray-400">Join Requests</p>
+					<p class="text-lg font-semibold text-gray-900 dark:text-white">${joinRequests.length}</p>
+				</div>
+				<div class="p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800">
+					<p class="text-xs text-gray-500 dark:text-gray-400">Your Role</p>
+					<p class="text-lg font-semibold text-indigo-600 dark:text-indigo-400">${escapeHtml(myRoleDisplay)}</p>
+				</div>
+			</div>
+			<div class="mt-6">
+				<p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Role Privileges</p>
+				<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+					${renderPermissionBadges(permissions)}
+				</div>
+			</div>
+		</div>
+	`;
+
+	const memberItems = members.length > 0
+		? members.map(member => {
+			const alias = getRoleAliasForLevel(member.role_level, aliases);
+			const isSelf = playerInfo && member.steamId === playerInfo.steamId;
+			const badgeClass = member.is_leader
+				? 'bg-yellow-100 text-yellow-800 border-yellow-200'
+				: member.role_level >= 2
+					? 'bg-indigo-100 text-indigo-800 border-indigo-200'
+					: 'bg-gray-100 text-gray-600 border-gray-200';
+			return `
+				<div class="p-3 border border-gray-200 dark:border-slate-700 rounded-lg flex items-start justify-between gap-3">
+					<div>
+						<p class="text-sm font-semibold text-gray-900 dark:text-gray-100">${escapeHtml(member.playerName || shortenSteamId(member.steamId))}</p>
+						<p class="text-xs text-gray-400 dark:text-gray-500">${escapeHtml(member.steamId)}</p>
+						<p class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(alias)}</p>
+						${isSelf ? '<span class="inline-flex items-center px-2 py-0.5 mt-1 text-[11px] font-medium rounded bg-blue-100 text-blue-700">You</span>' : ''}
+					</div>
+					<div class="flex flex-col items-end gap-2">
+						<span class="px-2 py-0.5 text-[11px] font-semibold rounded-full border ${badgeClass}">
+							${escapeHtml(getRoleNameByLevel(member.role))}
+						</span>
+						<div class="flex items-center gap-2">
+							<button type="button" class="text-[11px] text-gray-400 hover:text-gray-600" title="Copy SteamID" onclick="copyToClipboard('${member.steamId}')">Copy</button>
+							${buildMemberActions(member, permissions)}
+						</div>
+					</div>
+				</div>
+			`;
+		}).join('')
+		: '<div class="text-sm text-gray-500 dark:text-gray-400">Belum ada data member.</div>';
+
+	const membersCard = `
+		<div class="card rounded-lg p-6">
+			<div class="flex items-center justify-between mb-4">
+				<div>
+					<h3 class="text-base font-semibold text-gray-900 dark:text-white">Members (${members.length})</h3>
+					<p class="text-xs text-gray-500 dark:text-gray-400">Lihat anggota faction beserta role-nya</p>
+				</div>
+			</div>
+			<div class="space-y-3">${memberItems}</div>
+		</div>
+	`;
+
+	const inviteCard = `
+		<div class="card rounded-lg p-6">
+			<div class="flex items-center justify-between mb-4">
+				<div>
+					<h3 class="text-base font-semibold text-gray-900 dark:text-white">Invitations</h3>
+					<p class="text-xs text-gray-500 dark:text-gray-400">Undang pemain baru ke faction-mu</p>
+				</div>
+			</div>
+			${permissions.canInvite ? `
+				<form id="faction-invite-form" onsubmit="return handleFactionInvite(event)" class="space-y-3">
+					<div>
+						<label class="text-xs font-medium text-gray-600 dark:text-gray-300">SteamID64 Player</label>
+						<input id="faction-invite-steamid" type="text" class="mt-1 w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white" placeholder="7656119XXXXXXXXXX" required>
+					</div>
+					<button type="submit" class="btn-primary px-4 py-2 text-sm font-semibold rounded-md">Send Invitation</button>
+				</form>
+			` : `
+				<div class="p-3 border border-dashed border-gray-300 text-sm text-gray-500 rounded-md">
+					Hanya Officer ke atas yang bisa mengirim undangan.
+				</div>
+			`}
+			<div class="mt-4">
+				<p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Pending Invitations (${invitations.length})</p>
+				<div class="space-y-2">
+					${invitations.length > 0 ? invitations.map(inv => `
+						<div class="p-3 border border-gray-200 dark:border-slate-700 rounded-lg">
+							<p class="text-sm font-medium text-gray-800 dark:text-gray-100">${escapeHtml(inv.playerName || shortenSteamId(inv.steamId))}</p>
+							<p class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(inv.steamId)}</p>
+							<p class="text-xs text-gray-400">Invited by: ${escapeHtml(inv.inviterName || inv.inviterId)}</p>
+							<p class="text-xs text-gray-400">Expires: ${formatFactionTimestamp(inv.expiresAt)}</p>
+						</div>
+					`).join('') : '<p class="text-xs text-gray-500">Tidak ada undangan pending.</p>'}
+				</div>
+			</div>
+		</div>
+	`;
+
+	const assignQuestCard = permissions.canManageQuests ? `
+		<div class="card rounded-lg p-6">
+			<div class="flex items-center justify-between mb-4">
+				<div>
+					<h3 class="text-base font-semibold text-gray-900 dark:text-white">📋 Assign Quest</h3>
+					<p class="text-xs text-gray-500 dark:text-gray-400">Assign quest ke anggota faction</p>
+				</div>
+				<button type="button" onclick="showAssignQuestModal()" class="btn-primary px-4 py-2 text-sm font-semibold rounded-md">
+					➕ Assign Quest
+				</button>
+			</div>
+		</div>
+	` : '';
+
+	const joinRequestsCard = `
+		<div class="card rounded-lg p-6">
+			<div class="flex items-center justify-between mb-4">
+				<div>
+					<h3 class="text-base font-semibold text-gray-900 dark:text-white">Join Requests</h3>
+					<p class="text-xs text-gray-500 dark:text-gray-400">Kelola player yang ingin bergabung</p>
+				</div>
+			</div>
+			<div class="space-y-3">
+				${joinRequests.length > 0 ? joinRequests.map(req => `
+					<div class="p-3 border border-gray-200 dark:border-slate-700 rounded-lg flex items-center justify-between">
+						<div>
+							<p class="text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(req.playerName || shortenSteamId(req.steamId))}</p>
+							<p class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(req.steamId)}</p>
+							<p class="text-xs text-gray-500 dark:text-gray-400">Requested: ${formatFactionTimestamp(req.createdAt)}</p>
+						</div>
+						${permissions.canAcceptRequests ? `
+							<div class="flex gap-2">
+								<button type="button" class="px-3 py-1 text-xs font-semibold rounded-md bg-green-100 text-green-700 hover:bg-green-200" onclick="handleFactionRequest('accept', '${req.steamId}')">Accept</button>
+								<button type="button" class="px-3 py-1 text-xs font-semibold rounded-md bg-red-100 text-red-700 hover:bg-red-200" onclick="handleFactionRequest('reject', '${req.steamId}')">Reject</button>
+							</div>
+						` : '<span class="text-xs text-gray-400">Only Officer+ can act</span>'}
+					</div>
+				`).join('') : '<p class="text-sm text-gray-500 dark:text-gray-400">Tidak ada join request.</p>'}
+			</div>
+		</div>
+	`;
+
+	const aliasCard = `
+		<div class="card rounded-lg p-6">
+			<div class="flex items-center justify-between mb-4">
+				<div>
+					<h3 class="text-base font-semibold text-gray-900 dark:text-white">Role Aliases</h3>
+					<p class="text-xs text-gray-500 dark:text-gray-400">Kustomisasi nama role di faction kamu</p>
+				</div>
+			</div>
+			${permissions.canSetAliases ? `
+				<div class="space-y-4">
+					${FACTION_ROLE_ORDER.map(role => {
+						const aliasValue = aliases[String(role.level)] || '';
+						const inputId = `role-alias-${role.key.toLowerCase()}`;
+						return `
+							<div>
+								<label class="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1 block">${role.key}</label>
+								<div class="flex gap-2">
+									<input id="${inputId}" type="text" class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white" placeholder="${role.key}" value="${escapeHtml(aliasValue)}" maxlength="16">
+									<button type="button" class="px-3 py-2 text-xs font-semibold rounded-md bg-indigo-600 text-white hover:bg-indigo-500" onclick="handleAliasSave('${role.key}')">Save</button>
+								</div>
+								<p class="text-[11px] text-gray-400 mt-1">Default: ${role.key}</p>
+							</div>
+						`;
+					}).join('')}
+				</div>
+			` : `
+				<div class="p-3 border border-dashed border-gray-300 text-sm text-gray-500 rounded-md">
+					Hanya Leader yang bisa mengganti role alias.
+				</div>
+			`}
+		</div>
+	`;
+
+	container.innerHTML = `
+		${infoCard}
+		${assignQuestCard}
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+			${membersCard}
+			${inviteCard}
+		</div>
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+			${joinRequestsCard}
+			${aliasCard}
+		</div>
+	`;
+}
+
+function buildMemberActions(member, permissions) {
+	const canManageRoles = permissions.canPromoteOfficer || permissions.canPromoteViceLeader || permissions.canTransferLeadership;
+	const isSelf = playerInfo && member.steamId === playerInfo.steamId;
+	if (!canManageRoles || member.is_leader || isSelf) {
+		return '';
+	}
+
+	const options = getRoleOptionsForSelect(member.role, permissions).filter(opt => !opt.disabled);
+	if (options.length === 0) return '';
+
+	return `
+		<select class="text-[11px] border border-gray-300 dark:border-slate-600 rounded-md px-2 py-1 bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-200"
+			data-steamid="${escapeHtml(member.steamId)}"
+			onchange="handleRoleSelectChange(this)">
+			<option value="">Set Role...</option>
+			${options.map(opt => `<option value="${opt.role}">${opt.role}</option>`).join('')}
+		</select>
+	`;
+}
+
+async function handleFactionInvite(event) {
+	event.preventDefault();
+	const input = document.getElementById('faction-invite-steamid');
+	if (!input) return false;
+
+	const targetSteamId = input.value.trim();
+	if (!targetSteamId) {
+		alert('Masukkan SteamID target.');
+		return false;
+	}
+
+	try {
+		await postPlayerFactionEndpoint('/player/faction/invite', { targetSteamId });
+		showToast('Invitation sent!', 'success');
+		input.value = '';
+		loadMyFaction(true);
+	} catch (error) {
+		showToast('Failed to send invitation: ' + error.message, 'error');
+	}
+
+	return false;
+}
+
+async function handleFactionRequest(action, steamId) {
+	if (!steamId) return;
+	const endpoint = action === 'accept'
+		? '/player/faction/accept-request'
+		: '/player/faction/reject-request';
+
+	try {
+		await postPlayerFactionEndpoint(endpoint, { targetSteamId: steamId });
+		showToast(`Request ${action}ed`, 'success');
+		loadMyFaction(true);
+	} catch (error) {
+		showToast(`Failed to ${action} request: ` + error.message, 'error');
+	}
+}
+
+async function handleRoleSelectChange(selectEl) {
+	const steamId = selectEl.dataset.steamid;
+	const newRoleName = selectEl.value;
+	if (!steamId || !newRoleName) return;
+
+	// Convert role name to role level (number)
+	const roleLevelMap = {
+		'Member': 0,
+		'Officer': 1,
+		'ViceLeader': 2,
+		'Leader': 3
+	};
+	
+	const roleLevel = roleLevelMap[newRoleName];
+	if (roleLevel === undefined) {
+		showToast('Invalid role selected', 'error');
+		return;
+	}
+
+	selectEl.disabled = true;
+	try {
+		await postPlayerFactionEndpoint('/player/faction/set-role', { targetSteamId: steamId, role: roleLevel });
+		showToast(`Role updated to ${newRoleName}`, 'success');
+		loadMyFaction(true);
+	} catch (error) {
+		showToast('Failed to set role: ' + error.message, 'error');
+	} finally {
+		selectEl.disabled = false;
+		selectEl.value = '';
+	}
+}
+
+// Show assign quest modal
+async function showAssignQuestModal() {
+	const modal = document.getElementById('assign-quest-modal');
+	if (!modal) {
+		showToast('Modal not found', 'error');
+		return;
+	}
+
+	modal.classList.remove('hidden');
+
+	try {
+		// Load available quests
+		const response = await postPlayerFactionEndpoint('/player/faction/available-quests', {});
+		if (response.success && response.quests) {
+			const questList = document.getElementById('assign-quest-list');
+			const questSelect = document.getElementById('assign-quest-select');
+			
+			if (questList && response.quests.length > 0) {
+				questList.innerHTML = response.quests.map(quest => {
+					const questId = escapeHtml(quest.id);
+					const displayName = escapeHtml(quest.displayName || quest.id);
+					const tier = quest.tier || 1;
+					const description = escapeHtml(quest.description || '');
+					
+					// Tier colors
+					const tierColors = {
+						1: 'from-blue-500 to-blue-600 border-blue-400',
+						2: 'from-green-500 to-green-600 border-green-400',
+						3: 'from-yellow-500 to-yellow-600 border-yellow-400',
+						4: 'from-orange-500 to-orange-600 border-orange-400',
+						5: 'from-red-500 to-red-600 border-red-400'
+					};
+					const tierColor = tierColors[tier] || tierColors[1];
+					
+					return `
+						<div class="quest-card-option p-4 border-2 border-gray-200 dark:border-slate-700 rounded-xl cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02] bg-white dark:bg-slate-800" 
+							 data-quest-id="${questId}"
+							 onclick="selectQuestCard('${questId}')">
+							<div class="flex items-start gap-3">
+								<div class="flex-shrink-0 w-12 h-12 rounded-lg bg-gradient-to-br ${tierColor} flex items-center justify-center text-white font-bold text-sm border-2">
+									T${tier}
+								</div>
+								<div class="flex-1 min-w-0">
+									<div class="flex items-center gap-2 mb-1">
+										<h4 class="text-sm font-bold text-gray-900 dark:text-white truncate">${displayName}</h4>
+										<span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 whitespace-nowrap">
+											Tier ${tier}
+										</span>
+									</div>
+									${description ? `<p class="text-xs text-gray-600 dark:text-gray-400 line-clamp-2">${description}</p>` : ''}
+								</div>
+								<div class="flex-shrink-0 quest-selected-indicator hidden">
+									<svg class="w-6 h-6 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+									</svg>
+								</div>
+							</div>
+						</div>
+					`;
+				}).join('');
+			} else if (questList) {
+				questList.innerHTML = '<div class="text-sm text-gray-500 dark:text-gray-400 text-center py-8">No quests available</div>';
+			}
+
+			// Load faction members
+			const factionData = await postPlayerFactionEndpoint('/player/faction/info', {});
+			if (factionData.success && factionData.members) {
+				const membersList = document.getElementById('assign-quest-members');
+				if (membersList) {
+					membersList.innerHTML = factionData.members.map(member => {
+						const steamId = escapeHtml(member.steamId);
+						const playerName = escapeHtml(member.playerName || shortenSteamId(member.steamId));
+						const isLeader = member.is_leader;
+						
+						return `
+							<label class="flex items-center gap-3 p-3 border border-gray-200 dark:border-slate-700 rounded-lg hover:bg-white dark:hover:bg-slate-800 hover:border-indigo-300 dark:hover:border-indigo-600 cursor-pointer transition-all bg-white dark:bg-slate-800">
+								<input type="checkbox" value="${steamId}" 
+									   class="assign-quest-member-checkbox w-5 h-5 rounded border-gray-300 dark:border-slate-600 text-indigo-600 focus:ring-indigo-500 focus:ring-2 cursor-pointer">
+								<div class="flex-1 min-w-0">
+									<div class="flex items-center gap-2">
+										<span class="font-medium text-gray-900 dark:text-white text-sm">${playerName}</span>
+										${isLeader ? '<span class="px-2 py-0.5 text-xs font-semibold bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 rounded-full">👑 Leader</span>' : ''}
+									</div>
+									<p class="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5">${steamId}</p>
+								</div>
+							</label>
+						`;
+					}).join('');
+				}
+			}
+		}
+	} catch (error) {
+		showToast('Failed to load quest data: ' + error.message, 'error');
+	}
+}
+
+// Close assign quest modal
+function closeAssignQuestModal() {
+	const modal = document.getElementById('assign-quest-modal');
+	if (modal) {
+		modal.classList.add('hidden');
+		const form = document.getElementById('assign-quest-form');
+		if (form) {
+			form.reset();
+		}
+	}
+}
+
+// Select quest card
+function selectQuestCard(questId) {
+	// Remove previous selection
+	document.querySelectorAll('.quest-card-option').forEach(card => {
+		card.classList.remove('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900/20');
+		card.classList.add('border-gray-200', 'dark:border-slate-700', 'bg-white', 'dark:bg-slate-800');
+		const indicator = card.querySelector('.quest-selected-indicator');
+		if (indicator) indicator.classList.add('hidden');
+	});
+	
+	// Add selection to clicked card
+	const selectedCard = document.querySelector(`[data-quest-id="${escapeHtml(questId)}"]`);
+	if (selectedCard) {
+		selectedCard.classList.remove('border-gray-200', 'dark:border-slate-700', 'bg-white', 'dark:bg-slate-800');
+		selectedCard.classList.add('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900/20');
+		const indicator = selectedCard.querySelector('.quest-selected-indicator');
+		if (indicator) indicator.classList.remove('hidden');
+	}
+	
+	// Set hidden input value
+	const questSelect = document.getElementById('assign-quest-select');
+	if (questSelect) {
+		questSelect.value = questId;
+	}
+}
+
+// Make selectQuestCard globally accessible
+window.selectQuestCard = selectQuestCard;
+
+// Submit quest assignment
+async function submitQuestAssignment(event) {
+	event.preventDefault();
+
+	const questId = document.getElementById('assign-quest-select')?.value;
+	if (!questId) {
+		showToast('Please select a quest', 'error');
+		return;
+	}
+
+	const checkboxes = document.querySelectorAll('.assign-quest-member-checkbox:checked');
+	const assignedMembers = Array.from(checkboxes).map(cb => cb.value);
+
+	if (assignedMembers.length === 0) {
+		showToast('Please select at least one member', 'error');
+		return;
+	}
+
+	try {
+		const response = await postPlayerFactionEndpoint('/player/faction/assign-quest', {
+			questId,
+			assignedMembers
+		});
+
+		if (response.success) {
+			showToast(`Quest assigned to ${assignedMembers.length} member(s) successfully!`, 'success');
+			closeAssignQuestModal();
+			loadMyFaction(true);
+		} else {
+			showToast('Failed to assign quest: ' + (response.error || response.message || 'Unknown error'), 'error');
+		}
+	} catch (error) {
+		showToast('Failed to assign quest: ' + error.message, 'error');
+	}
+}
+
+async function handleAliasSave(roleKey) {
+	const inputId = `role-alias-${roleKey.toLowerCase()}`;
+	const input = document.getElementById(inputId);
+	if (!input) return;
+	const alias = input.value.trim();
+
+	try {
+		await postPlayerFactionEndpoint('/player/faction/set-alias', { role: roleKey, alias });
+		showToast('Alias saved', 'success');
+		loadMyFaction(true);
+	} catch (error) {
+		showToast('Failed to save alias: ' + error.message, 'error');
 	}
 }
 

@@ -7,6 +7,7 @@
 	<script src="https://cdn.tailwindcss.com"></script>
 	<script>
 		tailwind.config = {
+			darkMode: 'class',
 			theme: {
 				extend: {
 					colors: {
@@ -21,16 +22,40 @@
 		* {
 			font-family: 'Inter', sans-serif;
 		}
+		@keyframes shrink {
+			from {
+				width: 100%;
+			}
+			to {
+				width: 0%;
+			}
+		}
+		.toast-progress {
+			animation: shrink 3s linear forwards;
+		}
 		body {
 			background: #f8fafc;
+			transition: background-color 0.3s ease;
+		}
+		.dark body {
+			background: #0f172a;
 		}
 		.card {
 			background: white;
 			border: 1px solid #e2e8f0;
+			transition: background-color 0.3s ease, border-color 0.3s ease;
+		}
+		.dark .card {
+			background: #1e293b;
+			border-color: #334155;
 		}
 		.card:hover {
 			border-color: #cbd5e1;
 			box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+		}
+		.dark .card:hover {
+			border-color: #475569;
+			box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
 		}
 		.btn-primary {
 			background: #6366f1;
@@ -46,10 +71,32 @@
 		.nav-btn:hover:not(.active) {
 			background: #f1f5f9;
 		}
+		.dark .nav-btn:hover:not(.active) {
+			background: #334155;
+		}
+		/* Sidebar styles */
+		#sidebar {
+			transform: translateX(-100%);
+			transition: transform 0.3s ease;
+		}
+		@media (min-width: 1024px) {
+			#sidebar {
+				transform: translateX(0) !important;
+			}
+			#sidebar-overlay {
+				display: none !important;
+			}
+		}
+		#sidebar-overlay {
+			transition: opacity 0.3s ease;
+		}
 		input:focus, textarea:focus, select:focus {
 			outline: none;
 			border-color: #6366f1;
 			box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+		}
+		.dark input:focus, .dark textarea:focus, .dark select:focus {
+			box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
 		}
 		.dropdown-content {
 			display: none;
@@ -65,41 +112,160 @@
 			min-width: 280px;
 			margin-top: 4px;
 		}
+		.dark .dropdown-content {
+			background: #1e293b;
+			border-color: #334155;
+			box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+		}
 		.dropdown.open .dropdown-content {
 			display: block;
+		}
+		/* Custom scrollbar for quest list */
+		#assign-quest-list::-webkit-scrollbar,
+		#assign-quest-members::-webkit-scrollbar {
+			width: 6px;
+		}
+		#assign-quest-list::-webkit-scrollbar-track,
+		#assign-quest-members::-webkit-scrollbar-track {
+			background: #f1f5f9;
+			border-radius: 3px;
+		}
+		.dark #assign-quest-list::-webkit-scrollbar-track,
+		.dark #assign-quest-members::-webkit-scrollbar-track {
+			background: #1e293b;
+		}
+		#assign-quest-list::-webkit-scrollbar-thumb,
+		#assign-quest-members::-webkit-scrollbar-thumb {
+			background: #cbd5e1;
+			border-radius: 3px;
+		}
+		#assign-quest-list::-webkit-scrollbar-thumb:hover,
+		#assign-quest-members::-webkit-scrollbar-thumb:hover {
+			background: #94a3b8;
+		}
+		.dark #assign-quest-list::-webkit-scrollbar-thumb,
+		.dark #assign-quest-members::-webkit-scrollbar-thumb {
+			background: #475569;
+		}
+		.dark #assign-quest-list::-webkit-scrollbar-thumb:hover,
+		.dark #assign-quest-members::-webkit-scrollbar-thumb:hover {
+			background: #64748b;
 		}
 	</style>
 </head>
 <body>
-	<!-- Navigation -->
-	<nav class="bg-white border-b border-gray-200">
-		<div class="max-w-7xl mx-auto px-6">
+	<!-- Sidebar -->
+	<div id="sidebar" class="fixed left-0 top-0 h-full w-64 bg-white dark:bg-slate-800 border-r border-gray-200 dark:border-slate-700 transition-transform duration-300 z-40 overflow-y-auto">
+		<div class="p-4">
+			<div class="flex items-center justify-between mb-6">
+				<h1 class="text-lg font-semibold text-gray-900 dark:text-white">Mabar Gaming</h1>
+				<button id="sidebar-close" onclick="toggleSidebar()" class="lg:hidden p-2 rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+					</svg>
+				</button>
+			</div>
+			
+			<!-- User Info -->
+			<div id="sidebar-user-info" class="hidden mb-4 p-3 bg-gray-50 dark:bg-slate-700 rounded-lg">
+				<span id="sidebar-player-info" class="text-sm text-gray-600 dark:text-gray-400"></span>
+				<button id="sidebar-logout-btn" onclick="logoutPlayer()" class="mt-2 w-full px-3 py-1.5 rounded-md text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition">Logout</button>
+			</div>
+
+			<!-- Navigation Menu -->
+			<nav class="space-y-1">
+				<button onclick="showPage('dashboard', this)" class="nav-btn w-full text-left px-4 py-2.5 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 transition flex items-center gap-3" data-page="dashboard">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+					</svg>
+					Dashboard
+				</button>
+				<button onclick="showPage('factions', this)" class="nav-btn w-full text-left px-4 py-2.5 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 transition flex items-center gap-3" data-page="factions">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+					</svg>
+					Factions
+				</button>
+				<button onclick="showPage('quests', this)" class="nav-btn w-full text-left px-4 py-2.5 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 transition flex items-center gap-3" data-page="quests">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+					</svg>
+					Quests
+				</button>
+				<button onclick="showPage('my-quests', this)" class="nav-btn w-full text-left px-4 py-2.5 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 transition flex items-center gap-3" data-page="my-quests">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+					</svg>
+					My Quests
+				</button>
+				<button onclick="showPage('my-faction', this)" class="nav-btn w-full text-left px-4 py-2.5 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 transition flex items-center gap-3" data-page="my-faction">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+					</svg>
+					My Faction
+				</button>
+				<button onclick="showPage('shop', this)" class="nav-btn w-full text-left px-4 py-2.5 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 transition flex items-center gap-3" data-page="shop">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path>
+					</svg>
+					Shop
+				</button>
+				<button onclick="showPage('commands', this)" class="nav-btn w-full text-left px-4 py-2.5 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 transition flex items-center gap-3" data-page="commands">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+					</svg>
+					Commands
+				</button>
+				<button onclick="showPage('players', this)" class="nav-btn w-full text-left px-4 py-2.5 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 transition flex items-center gap-3" data-page="players">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path>
+					</svg>
+					Players
+				</button>
+			</nav>
+
+			<!-- Dark Mode Toggle -->
+			<div class="mt-6 pt-6 border-t border-gray-200 dark:border-slate-700">
+				<button id="dark-mode-toggle" onclick="toggleDarkMode()" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition" title="Toggle Dark Mode">
+					<svg id="dark-mode-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
+					</svg>
+					Dark Mode
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Sidebar Overlay (Mobile) -->
+	<div id="sidebar-overlay" class="fixed inset-0 bg-black bg-opacity-50 z-30 lg:hidden hidden" onclick="toggleSidebar()"></div>
+
+	<!-- Top Bar -->
+	<nav class="bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 transition-colors lg:ml-64">
+		<div class="px-4 sm:px-6 lg:px-8">
 			<div class="flex justify-between h-16">
 				<div class="flex items-center">
-					<h1 class="text-lg font-semibold text-gray-900">Mabar Gaming Server</h1>
+					<button id="sidebar-toggle" onclick="toggleSidebar()" class="lg:hidden p-2 rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700">
+						<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+						</svg>
+					</button>
+					<h1 class="ml-2 lg:ml-0 text-lg font-semibold text-gray-900 dark:text-white">Dashboard</h1>
 				</div>
-				<div class="flex items-center space-x-1">
-					<span id="player-info" class="hidden mr-4 text-sm text-gray-600"></span>
-					<button id="logout-btn" onclick="logoutPlayer()" class="hidden px-4 py-2 rounded-md text-sm font-medium text-red-600 hover:bg-red-50 transition">Logout</button>
-					<button onclick="showPage('dashboard', this)" class="nav-btn px-4 py-2 rounded-md text-sm font-medium text-gray-700 transition" data-page="dashboard">Dashboard</button>
-					<button onclick="showPage('factions', this)" class="nav-btn px-4 py-2 rounded-md text-sm font-medium text-gray-700 transition" data-page="factions">Factions</button>
-					<button onclick="showPage('quests', this)" class="nav-btn px-4 py-2 rounded-md text-sm font-medium text-gray-700 transition" data-page="quests">Quests</button>
-					<button onclick="showPage('my-quests', this)" class="nav-btn px-4 py-2 rounded-md text-sm font-medium text-gray-700 transition" data-page="my-quests">My Quests</button>
-					<button onclick="showPage('shop', this)" class="nav-btn px-4 py-2 rounded-md text-sm font-medium text-gray-700 transition" data-page="shop">Shop</button>
-					<button onclick="showPage('commands', this)" class="nav-btn px-4 py-2 rounded-md text-sm font-medium text-gray-700 transition" data-page="commands">Commands</button>
-					<button onclick="showPage('players', this)" class="nav-btn px-4 py-2 rounded-md text-sm font-medium text-gray-700 transition" data-page="players">Players</button>
+				<div class="flex items-center space-x-4">
+					<span id="player-info" class="hidden text-sm text-gray-600 dark:text-gray-400"></span>
+					<button id="logout-btn" onclick="logoutPlayer()" class="hidden px-4 py-2 rounded-md text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition">Logout</button>
 				</div>
 			</div>
 		</div>
 	</nav>
 
 	<!-- Main Content -->
-	<main class="max-w-7xl mx-auto px-6 py-8">
+	<main class="lg:ml-64 px-4 sm:px-6 lg:px-8 py-8">
 		<!-- Dashboard Page -->
 		<div id="dashboard-page" class="page">
 			<div class="mb-6">
-				<h2 class="text-2xl font-semibold text-gray-900">Dashboard</h2>
-				<p class="text-sm text-gray-500 mt-1">Server statistics and overview</p>
+				<h2 class="text-2xl font-semibold text-gray-900 dark:text-white">Dashboard</h2>
+				<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Server statistics and overview</p>
 			</div>
 
 			<!-- Stats Cards -->
@@ -107,8 +273,8 @@
 				<div class="card rounded-lg p-5">
 					<div class="flex items-center justify-between">
 						<div>
-							<p class="text-sm text-gray-500 mb-1">Total Factions</p>
-							<p id="stat-factions" class="text-2xl font-semibold text-gray-900">-</p>
+							<p class="text-sm text-gray-500 dark:text-gray-400 mb-1">Total Factions</p>
+							<p id="stat-factions" class="text-2xl font-semibold text-gray-900 dark:text-white">-</p>
 						</div>
 						<div class="bg-indigo-50 p-3 rounded-lg">
 							<svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -121,8 +287,8 @@
 				<div class="card rounded-lg p-5">
 					<div class="flex items-center justify-between">
 						<div>
-							<p class="text-sm text-gray-500 mb-1">Total Quests</p>
-							<p id="stat-quests" class="text-2xl font-semibold text-gray-900">-</p>
+							<p class="text-sm text-gray-500 dark:text-gray-400 mb-1">Total Quests</p>
+							<p id="stat-quests" class="text-2xl font-semibold text-gray-900 dark:text-white">-</p>
 						</div>
 						<div class="bg-blue-50 p-3 rounded-lg">
 							<svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -135,8 +301,8 @@
 				<div class="card rounded-lg p-5">
 					<div class="flex items-center justify-between">
 						<div>
-							<p class="text-sm text-gray-500 mb-1">Total Players</p>
-							<p id="stat-players" class="text-2xl font-semibold text-gray-900">-</p>
+							<p class="text-sm text-gray-500 dark:text-gray-400 mb-1">Total Players</p>
+							<p id="stat-players" class="text-2xl font-semibold text-gray-900 dark:text-white">-</p>
 						</div>
 						<div class="bg-green-50 p-3 rounded-lg">
 							<svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -149,8 +315,8 @@
 				<div class="card rounded-lg p-5">
 					<div class="flex items-center justify-between">
 						<div>
-							<p class="text-sm text-gray-500 mb-1">Active Quests</p>
-							<p id="stat-active" class="text-2xl font-semibold text-gray-900">-</p>
+							<p class="text-sm text-gray-500 dark:text-gray-400 mb-1">Active Quests</p>
+							<p id="stat-active" class="text-2xl font-semibold text-gray-900 dark:text-white">-</p>
 						</div>
 						<div class="bg-orange-50 p-3 rounded-lg">
 							<svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -163,8 +329,8 @@
 
 			<!-- Recent Activity -->
 			<div class="card rounded-lg p-6">
-				<h3 class="text-base font-semibold text-gray-900 mb-4">Recent Activity</h3>
-				<div id="recent-activity" class="text-sm text-gray-500">
+				<h3 class="text-base font-semibold text-gray-900 dark:text-white mb-4">Recent Activity</h3>
+				<div id="recent-activity" class="text-sm text-gray-500 dark:text-gray-400">
 					Loading...
 				</div>
 			</div>
@@ -173,19 +339,19 @@
 		<!-- Factions Page -->
 		<div id="factions-page" class="page hidden">
 			<div class="mb-6">
-				<h2 class="text-2xl font-semibold text-gray-900">Factions</h2>
-				<p class="text-sm text-gray-500 mt-1">Manage server factions</p>
+				<h2 class="text-2xl font-semibold text-gray-900 dark:text-white">Factions</h2>
+				<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Manage server factions</p>
 			</div>
 
 			<div class="card rounded-lg overflow-hidden">
-				<div class="p-4 border-b border-gray-200 bg-gray-50">
+				<div class="p-4 border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800">
 					<div class="flex gap-3">
-						<input type="text" id="faction-search" placeholder="Search factions..." class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none">
+						<input type="text" id="faction-search" placeholder="Search factions..." class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:outline-none">
 						<button onclick="refreshFactions()" class="btn-primary px-4 py-2 text-sm font-medium rounded-md">Refresh</button>
 					</div>
 				</div>
 				<div id="factions-list" class="space-y-3 p-4">
-					<div class="text-center text-sm text-gray-500 py-12">Loading...</div>
+					<div class="text-center text-sm text-gray-500 dark:text-gray-400 py-12">Loading...</div>
 				</div>
 			</div>
 		</div>
@@ -195,29 +361,29 @@
 			<div class="mb-6">
 				<div class="flex justify-between items-center">
 					<div>
-						<h2 class="text-2xl font-semibold text-gray-900">Quests</h2>
-						<p class="text-sm text-gray-500 mt-1">Manage quest definitions</p>
+						<h2 class="text-2xl font-semibold text-gray-900 dark:text-white">Quests</h2>
+						<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Manage quest definitions</p>
 					</div>
 					<button onclick="showQuestEditor(null)" class="admin-only btn-primary px-4 py-2 text-sm font-medium rounded-md">+ New Quest</button>
 				</div>
 			</div>
 
 			<div class="card rounded-lg overflow-hidden">
-				<div class="p-4 border-b border-gray-200 bg-gray-50">
+				<div class="p-4 border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800">
 					<div class="flex flex-col gap-3">
-						<input type="text" id="quest-search" placeholder="Search quests..." class="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+						<input type="text" id="quest-search" placeholder="Search quests..." class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
 						<div class="flex gap-3">
 							<div class="flex-1">
-								<label class="block text-xs font-medium text-gray-700 mb-1">Faction Filter</label>
-								<select id="quest-faction-filter" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+								<label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Faction Filter</label>
+								<select id="quest-faction-filter" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
 									<option value="all">All Quests</option>
 									<option value="faction">Faction Only</option>
 									<option value="non-faction">Non-Faction Only</option>
 								</select>
 							</div>
 							<div class="flex-1">
-								<label class="block text-xs font-medium text-gray-700 mb-1">Type Filter</label>
-								<select id="quest-type-filter" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+								<label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Type Filter</label>
+								<select id="quest-type-filter" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
 									<option value="all">All Types</option>
 									<option value="daily">Daily</option>
 									<option value="weekly">Weekly</option>
@@ -229,7 +395,7 @@
 					</div>
 				</div>
 				<div id="quests-list" class="space-y-3 p-4">
-					<div class="text-center text-sm text-gray-500 py-12">Loading...</div>
+					<div class="text-center text-sm text-gray-500 dark:text-gray-400 py-12">Loading...</div>
 				</div>
 			</div>
 		</div>
@@ -237,16 +403,16 @@
 		<!-- Players Page -->
 		<div id="players-page" class="page hidden">
 			<div class="mb-6">
-				<h2 class="text-2xl font-semibold text-gray-900">Players</h2>
-				<p class="text-sm text-gray-500 mt-1">View player statistics from PlayerStatsNew</p>
+				<h2 class="text-2xl font-semibold text-gray-900 dark:text-white">Players</h2>
+				<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">View player statistics from PlayerStatsNew</p>
 			</div>
 
 			<div class="card rounded-lg overflow-hidden">
-				<div class="p-4 border-b border-gray-200 bg-gray-50">
-					<input type="text" id="player-search" placeholder="Search by Name or SteamID..." class="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none">
+				<div class="p-4 border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800">
+					<input type="text" id="player-search" placeholder="Search by Name or SteamID..." class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:outline-none">
 				</div>
 				<div id="players-list" class="space-y-3 p-4">
-					<div class="text-center text-sm text-gray-500 py-12">Loading...</div>
+					<div class="text-center text-sm text-gray-500 dark:text-gray-400 py-12">Loading...</div>
 				</div>
 			</div>
 		</div>
@@ -256,18 +422,18 @@
 			<div class="max-w-md mx-auto mt-20">
 				<div class="card rounded-lg p-8">
 					<div class="text-center mb-6">
-						<h2 class="text-2xl font-bold text-gray-900 mb-2">Player Login</h2>
-						<p class="text-sm text-gray-600">Masukkan kode autentikasi Anda dari game</p>
+						<h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-2">Player Login</h2>
+						<p class="text-sm text-gray-600 dark:text-gray-400">Masukkan kode autentikasi Anda dari game</p>
 					</div>
 					<form onsubmit="handleLogin(event)" class="space-y-4">
 						<div>
-							<label class="block text-sm font-medium text-gray-700 mb-1">Auth Code</label>
-							<input type="text" id="auth-code-input" placeholder="XXXXX-XXXXX" class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" required>
-							<p class="text-xs text-gray-500 mt-1">Gunakan command /scode di game untuk mendapatkan kode Anda</p>
+							<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Auth Code</label>
+							<input type="text" id="auth-code-input" placeholder="XXXXX-XXXXX" class="w-full px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" required>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Gunakan command /scode di game untuk mendapatkan kode Anda</p>
 						</div>
 						<button type="submit" class="w-full btn-primary px-4 py-2 text-sm font-medium rounded-md">Login</button>
 					</form>
-					<div id="login-error" class="hidden mt-4 p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700"></div>
+					<div id="login-error" class="hidden mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-sm text-red-700 dark:text-red-400"></div>
 				</div>
 			</div>
 		</div>
@@ -275,14 +441,14 @@
 		<!-- My Quests Page -->
 		<div id="my-quests-page" class="page hidden">
 			<div class="mb-6">
-				<h2 class="text-2xl font-semibold text-gray-900">My Quests</h2>
-				<p class="text-sm text-gray-500 mt-1">Manage your quests</p>
+				<h2 class="text-2xl font-semibold text-gray-900 dark:text-white">My Quests</h2>
+				<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Manage your quests</p>
 			</div>
 
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
 				<!-- Active Quests -->
 				<div class="card rounded-lg p-6">
-					<h3 class="text-lg font-semibold text-gray-900 mb-4">Active Quests</h3>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Active Quests</h3>
 					<div id="my-active-quests" class="space-y-3">
 						<div class="text-center text-sm text-gray-500 py-8">Loading...</div>
 					</div>
@@ -298,19 +464,33 @@
 			</div>
 		</div>
 
+		<!-- My Faction Page -->
+		<div id="my-faction-page" class="page hidden">
+			<div class="mb-6">
+				<h2 class="text-2xl font-semibold text-gray-900 dark:text-white">My Faction</h2>
+				<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Manage your faction based on your role permissions</p>
+			</div>
+
+			<div id="my-faction-content" class="space-y-6">
+				<div class="card rounded-lg p-6">
+					<p class="text-sm text-gray-600 dark:text-gray-300">Login terlebih dahulu untuk melihat dan mengelola faction kamu.</p>
+				</div>
+			</div>
+		</div>
+
 		<!-- Commands Page -->
 		<div id="commands-page" class="page hidden">
 			<div class="mb-6">
-				<h2 class="text-2xl font-semibold text-gray-900">Commands</h2>
-				<p class="text-sm text-gray-500 mt-1">Available in-game commands</p>
+				<h2 class="text-2xl font-semibold text-gray-900 dark:text-white">Commands</h2>
+				<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Available in-game commands</p>
 			</div>
 
 			<div class="card rounded-lg overflow-hidden">
-				<div class="p-4 border-b border-gray-200 bg-gray-50">
-					<input type="text" id="command-search" placeholder="Search commands..." class="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+				<div class="p-4 border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800">
+					<input type="text" id="command-search" placeholder="Search commands..." class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
 				</div>
 				<div id="commands-list" class="p-6">
-					<div class="text-center text-sm text-gray-500 py-12">Loading...</div>
+					<div class="text-center text-sm text-gray-500 dark:text-gray-400 py-12">Loading...</div>
 				</div>
 			</div>
 		</div>
@@ -320,38 +500,40 @@
 			<div class="mb-6">
 				<div class="flex justify-between items-center">
 					<div>
-						<h2 class="text-2xl font-semibold text-gray-900">Shop Items</h2>
-						<p class="text-sm text-gray-500 mt-1">Manage shop items</p>
+						<h2 class="text-2xl font-semibold text-gray-900 dark:text-white">Shop Items</h2>
+						<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Manage shop items</p>
 					</div>
 					<button onclick="showShopItemEditor(null)" class="admin-only btn-primary px-4 py-2 text-sm font-medium rounded-md">+ New Item</button>
 				</div>
 			</div>
 
 			<div class="card rounded-lg overflow-hidden">
-				<div class="p-4 border-b border-gray-200 bg-gray-50">
-					<input type="text" id="shop-search" placeholder="Search shop items..." class="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+				<div class="p-4 border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800">
+					<input type="text" id="shop-search" placeholder="Search shop items..." class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
 				</div>
 				<div id="shop-items-list" class="divide-y divide-gray-200">
-					<div class="text-center text-sm text-gray-500 py-12">Loading...</div>
+					<div class="text-center text-sm text-gray-500 dark:text-gray-400 py-12">Loading...</div>
 				</div>
 			</div>
 		</div>
 	</main>
 
+	<div id="toast-container" class="fixed top-5 right-5 space-y-3 z-50 pointer-events-none flex flex-col items-end"></div>
+
 	<!-- Quest Editor Modal -->
 	<div id="quest-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onclick="closeQuestEditor()">
-		<div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+		<div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
 			<!-- Header -->
-			<div class="relative p-6 border-b border-gray-200" style="background: linear-gradient(135deg, #6366f115 0%, #6366f105 100%);">
+			<div class="relative p-6 border-b border-gray-200 dark:border-slate-700" style="background: linear-gradient(135deg, #6366f115 0%, #6366f105 100%);">
 				<div class="flex items-start justify-between">
 					<div class="flex items-center gap-4 flex-1">
 						<div class="w-16 h-16 rounded-lg flex items-center justify-center text-2xl font-bold text-white bg-gradient-to-br from-indigo-500 to-purple-600">📜</div>
 						<div class="flex-1">
-							<h2 class="text-2xl font-bold text-gray-900"><span id="quest-modal-title">Edit Quest</span></h2>
-							<p class="text-sm text-gray-600 mt-1">Manage quest definition and objectives</p>
+							<h2 class="text-2xl font-bold text-gray-900 dark:text-white"><span id="quest-modal-title">Edit Quest</span></h2>
+							<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Manage quest definition and objectives</p>
 						</div>
 					</div>
-					<button onclick="closeQuestEditor()" class="text-gray-400 hover:text-gray-600 transition">
+					<button onclick="closeQuestEditor()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition">
 						<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
 						</svg>
@@ -364,30 +546,30 @@
 					<div class="space-y-5">
 						<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 							<div>
-								<label class="block text-sm font-medium text-gray-700 mb-1">Quest ID</label>
-								<input type="text" id="quest-id" required readonly class="w-full px-3 py-2 text-sm border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed">
+								<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Quest ID</label>
+								<input type="text" id="quest-id" required readonly class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-gray-50 dark:bg-slate-700 text-gray-500 dark:text-gray-400 cursor-not-allowed">
 							</div>
 							<div>
-								<label class="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
-								<input type="text" id="quest-name" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+								<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Display Name</label>
+								<input type="text" id="quest-name" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
 							</div>
 						</div>
 						<div>
-							<label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
-							<textarea id="quest-desc" rows="3" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"></textarea>
+							<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</label>
+							<textarea id="quest-desc" rows="3" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"></textarea>
 						</div>
 						<div class="grid grid-cols-1 md:grid-cols-4 gap-4">
 							<div class="flex items-center">
 								<input type="checkbox" id="quest-enabled" class="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
-								<label for="quest-enabled" class="ml-2 text-sm font-medium text-gray-700">Enabled</label>
+								<label for="quest-enabled" class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">Enabled</label>
 							</div>
 							<div class="flex items-center">
 								<input type="checkbox" id="quest-faction" class="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
 								<label for="quest-faction" class="ml-2 text-sm font-medium text-gray-700">Faction Quest</label>
 							</div>
 							<div>
-								<label class="block text-sm font-medium text-gray-700 mb-1">Quest Type</label>
-								<select id="quest-type" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+								<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Quest Type</label>
+								<select id="quest-type" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
 									<option value="repeat">Repeat</option>
 									<option value="daily">Daily</option>
 									<option value="weekly">Weekly</option>
@@ -395,20 +577,20 @@
 								</select>
 							</div>
 							<div>
-								<label class="block text-sm font-medium text-gray-700 mb-1">Tier</label>
-								<input type="number" id="quest-tier" value="1" min="1" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+								<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tier</label>
+								<input type="number" id="quest-tier" value="1" min="1" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
 							</div>
 							<div>
-								<label class="block text-sm font-medium text-gray-700 mb-1">Timer (Seconds) <span class="text-xs text-gray-500">(0 = use default from config)</span></label>
-								<input type="number" id="quest-timer-seconds" value="0" min="0" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="0">
-								<p class="text-xs text-gray-500 mt-1">For Faction Quests: Set custom timer in seconds. 0 = use DefaultTimerSeconds from config (default: 3600s = 1 hour)</p>
+								<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Timer (Seconds) <span class="text-xs text-gray-500 dark:text-gray-400">(0 = use default from config)</span></label>
+								<input type="number" id="quest-timer-seconds" value="0" min="0" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="0">
+								<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">For Faction Quests: Set custom timer in seconds. 0 = use DefaultTimerSeconds from config (default: 3600s = 1 hour)</p>
 							</div>
 						</div>
 					</div>
 					<div class="space-y-5 mt-6">
 						<div>
 							<div class="flex items-center justify-between mb-4">
-								<label class="text-sm font-semibold text-gray-900">Objectives</label>
+								<label class="text-sm font-semibold text-gray-900 dark:text-white">Objectives</label>
 								<div class="flex gap-2">
 									<button type="button" onclick="addObjective()" class="btn-primary px-3 py-1.5 text-xs font-medium rounded-md">+ Add</button>
 									<button type="button" onclick="toggleJsonPreview('objectives')" class="px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-md hover:bg-gray-50">JSON</button>
@@ -416,7 +598,7 @@
 							</div>
 							<div id="objectives-form-container" class="space-y-3"></div>
 							<div id="objectives-json-preview" class="hidden mt-4">
-								<textarea id="quest-objectives" rows="6" readonly class="w-full px-3 py-2 text-xs font-mono border border-gray-300 rounded-md bg-gray-50"></textarea>
+								<textarea id="quest-objectives" rows="6" readonly class="w-full px-3 py-2 text-xs font-mono border border-gray-300 dark:border-slate-600 rounded-md bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white"></textarea>
 							</div>
 						</div>
 						<div>
@@ -437,8 +619,8 @@
 				</form>
 			</div>
 			<!-- Footer -->
-			<div class="p-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-3">
-				<button type="button" onclick="closeQuestEditor()" class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+			<div class="p-4 border-t border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 flex justify-end gap-3">
+				<button type="button" onclick="closeQuestEditor()" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-600 transition">Cancel</button>
 				<button type="submit" form="quest-form" class="admin-only btn-primary px-4 py-2 text-sm font-medium rounded-lg">Save Quest</button>
 			</div>
 		</div>
@@ -446,15 +628,15 @@
 
 	<!-- Shop Item Editor Modal -->
 	<div id="shop-item-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onclick="closeShopItemEditor()">
-		<div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+		<div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
 			<!-- Header -->
-			<div class="relative p-6 border-b border-gray-200" style="background: linear-gradient(135deg, #10b98115 0%, #10b98105 100%);">
+			<div class="relative p-6 border-b border-gray-200 dark:border-slate-700" style="background: linear-gradient(135deg, #10b98115 0%, #10b98105 100%);">
 				<div class="flex items-start justify-between">
 					<div class="flex items-center gap-4 flex-1">
 						<div class="w-16 h-16 rounded-lg flex items-center justify-center text-2xl font-bold text-white bg-gradient-to-br from-green-500 to-emerald-600">🛒</div>
 						<div class="flex-1">
-							<h2 class="text-2xl font-bold text-gray-900"><span id="shop-item-modal-title">Edit Shop Item</span></h2>
-							<p class="text-sm text-gray-600 mt-1">Configure shop item details and pricing</p>
+							<h2 class="text-2xl font-bold text-gray-900 dark:text-white"><span id="shop-item-modal-title">Edit Shop Item</span></h2>
+							<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Configure shop item details and pricing</p>
 						</div>
 					</div>
 					<button onclick="closeShopItemEditor()" class="text-gray-400 hover:text-gray-600 transition">
@@ -525,6 +707,70 @@
 				<button type="button" onclick="closeShopItemEditor()" class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition">Cancel</button>
 				<button type="submit" form="shop-item-form" class="admin-only btn-primary px-4 py-2 text-sm font-medium rounded-lg">Save</button>
 			</div>
+		</div>
+	</div>
+
+	<!-- Assign Quest Modal -->
+	<div id="assign-quest-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onclick="if(event.target === this) closeAssignQuestModal()">
+		<div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col" onclick="event.stopPropagation()">
+			<!-- Header -->
+			<div class="p-6 border-b border-gray-200 dark:border-slate-700 bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-slate-800 dark:to-slate-800">
+				<div class="flex justify-between items-center">
+					<div>
+						<h3 class="text-2xl font-bold text-gray-900 dark:text-white">Assign Quest to Members</h3>
+						<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Select a quest and choose members to assign</p>
+					</div>
+					<button onclick="closeAssignQuestModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700">
+						<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+						</svg>
+					</button>
+				</div>
+			</div>
+
+			<!-- Content - 2 Grid Layout -->
+			<form id="assign-quest-form" onsubmit="submitQuestAssignment(event)" class="flex-1 overflow-hidden flex flex-col">
+				<div class="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 p-6 overflow-y-auto">
+					<!-- Left: Quest Selection -->
+					<div class="space-y-4">
+						<div>
+							<label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 uppercase tracking-wide">
+								📜 Select Quest
+							</label>
+							<div id="assign-quest-list" class="space-y-3 max-h-[500px] overflow-y-auto pr-2">
+								<div class="text-sm text-gray-500 dark:text-gray-400 text-center py-8">Loading quests...</div>
+							</div>
+							<input type="hidden" id="assign-quest-select" required>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Only faction quests available for your tier are shown</p>
+						</div>
+					</div>
+
+					<!-- Right: Members Selection -->
+					<div class="space-y-4">
+						<div>
+							<label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 uppercase tracking-wide">
+								👥 Select Members
+							</label>
+							<div id="assign-quest-members" class="border border-gray-200 dark:border-slate-700 rounded-lg p-4 max-h-[500px] overflow-y-auto bg-gray-50 dark:bg-slate-900/50 space-y-2">
+								<div class="text-sm text-gray-500 dark:text-gray-400 text-center py-8">Loading members...</div>
+							</div>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Select one or more members to assign this quest to</p>
+						</div>
+					</div>
+				</div>
+
+				<!-- Footer -->
+				<div class="p-6 border-t border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 flex justify-end space-x-3">
+					<button type="button" onclick="closeAssignQuestModal()" 
+							class="px-5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition font-medium">
+						Cancel
+					</button>
+					<button type="submit" 
+							class="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 transition font-medium shadow-lg">
+						Assign Quest
+					</button>
+				</div>
+			</form>
 		</div>
 	</div>
 
